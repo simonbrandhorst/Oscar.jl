@@ -1,6 +1,7 @@
 ################################################################################
 # field of rationals (singleton type)
-@registerSerializationType(FlintRationalField)
+encodeType(::Type{FlintRationalField}) = "FlintRationalField"
+reverseTypeMap["FlintRationalField"] = FlintRationalField
 
 
 ################################################################################
@@ -77,6 +78,10 @@ end
 
 ################################################################################
 # SimpleNumField
+
+encodeType(::Type{<:Hecke.NfRel}) = "Hecke.NfRel"
+reverseTypeMap["Hecke.NfRel"] = Hecke.NfRel
+
 @registerSerializationType(AnticNumberField)
 
 function save_internal(s::SerializerState, K::SimpleNumField)
@@ -113,6 +118,9 @@ end
 @registerSerializationType(fq_nmod)
 @registerSerializationType(nf_elem)
 
+encodeType(::Type{<:Hecke.NfRelElem}) = "Hecke.NfRelElem"
+reverseTypeMap["Hecke.NfRelElem"] = Hecke.NfRelElem
+
 function save_internal(s::SerializerState, k::Union{nf_elem, fq_nmod, Hecke.NfRelElem})
     K = parent(k)
     polynomial = parent(defining_polynomial(K))(k)
@@ -145,6 +153,10 @@ end
 
 ################################################################################
 # Non Simple Extension
+
+encodeType(::Type{<:Hecke.NfRelNS}) = "Hecke.NfRelNS"
+reverseTypeMap["Hecke.NfRelNS"] = Hecke.NfRelNS
+
 @registerSerializationType(NfAbsNS)
 @registerSerializationType(NfAbsNSElem)
 
@@ -166,6 +178,9 @@ function load_internal(s::DeserializerState,
 end
 
 #elements
+encodeType(::Type{<:Hecke.NfRelNSElem}) = "Hecke.NfRelNSElem"
+reverseTypeMap["Hecke.NfRelNSElem"] = Hecke.NfRelNSElem
+
 function save_internal(s::SerializerState, k::Union{NfAbsNSElem, Hecke.NfRelNSElem})
     K = parent(k)
     polynomial = Oscar.Hecke.data(k)
@@ -212,6 +227,10 @@ end
 
 ################################################################################
 # FracField
+
+encodeType(::Type{<:FracField}) = "FracField"
+reverseTypeMap["FracField"] = FracField
+
 function save_internal(s::SerializerState, K::FracField)
     return Dict(
         :base_ring => save_type_dispatch(s, base_ring(K)),
@@ -227,6 +246,9 @@ function load_internal(s::DeserializerState,
 end
 
 # elements
+encodeType(::Type{<:FracElem}) = "FracElem"
+reverseTypeMap["FracElem"] = FracElem
+
 function save_internal(s::SerializerState, f::FracElem)
     return Dict(
         :parent => save_type_dispatch(s, parent(f)),
@@ -393,4 +415,57 @@ function load_internal(s::DeserializerState, ::Type{Hecke.NumFieldEmbNfAbsNS}, d
 
     return complex_embedding(K, gen_balls)
 end
+
+################################################################################
+# Padic Field
+
+@registerSerializationType(FlintPadicField)
+@registerSerializationType(padic)
+
+function save_internal(s::SerializerState, P::FlintPadicField)
+    return Dict(
+        :prime => save_type_dispatch(s, prime(P)),
+        :precision => save_type_dispatch(s, precision(P))
+    )
+end
+
+function load_internal(s::DeserializerState, ::Type{FlintPadicField}, dict::Dict)
+    prime_num = load_type_dispatch(s, fmpz, dict[:prime])
+    precision = load_type_dispatch(s, Int64, dict[:precision])
+
+    return PadicField(prime_num, precision)
+end
+
+#elements
+
+function save_internal(s::SerializerState, n::padic)
+    return Dict(
+        :rational_rep => save_type_dispatch(s, lift(QQ, n)),
+        :parent => save_type_dispatch(s, parent(n))
+    )
+end
+
+function load_internal(s::DeserializerState, ::Type{padic}, dict::Dict)
+    rational_rep = load_type_dispatch(s, fmpq, dict[:rational_rep])
+    parent_field = load_type_dispatch(s, FlintPadicField, dict[:parent])
+
+    return parent_field(rational_rep)
+end
+
+function load_internal_with_parent(s::DeserializerState,
+                                   ::Type{padic},
+                                   dict::Dict,
+                                   parent::FlintPadicField)
+    rational_rep = load_type_dispatch(s, fmpq, dict[:rational_rep])
+    parent_field = load_type_dispatch(s, FlintPadicField, dict[:parent])
+
+    # padic num precision is 1 higher than the field it lies in
+    if precision(parent_field) > precision(parent)
+        @warn("Precision Warning: given parent is less precise than serialized parent",
+              maxlog=1)
+    end
+    
+    return parent(rational_rep)
+end
+
 

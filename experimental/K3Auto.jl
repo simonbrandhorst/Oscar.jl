@@ -1,9 +1,10 @@
-export root_lattice,highest_root,coxeter_number,weyl_vector,has_zero_entropy,check_zero_entropy,common_invariant
+export weyl_vector, K3Auto, common_invariant, separating_hyperplanes
 
-Hecke.add_assert_scope(:K3Auto)
-#set_assert_level(:K3Auto, 3)
-Hecke.add_verbose_scope(:K3Auto)
-#set_verbose_level(:K3Auto, 3)
+# somehow doesn't work
+# Hecke.add_assert_scope(:K3Auto)
+# Hecke.add_verbose_scope(:K3Auto)
+# set_assert_level(:K3Auto, 0)
+# set_verbose_level(:K3Auto, 0)
 
 
 ################################################################################
@@ -117,7 +118,7 @@ Input:
 """
 function quadratic_triple(Q, b, c; algorithm=:short_vectors, equal=false)
   if algorithm == :short_vectors
-    L, p, dist = Hecke.convert_type(Q, b, QQ(c))
+    L, p, dist = Hecke._convert_type(Q, b, QQ(c))
     #@vprint :K3Auto 1 ambient_space(L), basis_matrix(L), p, dist
     cv = Hecke.closest_vectors(L, p, dist, check=false, equal=equal)
     #@show isone(basis_matrix(L)),gram_matrix(L),p,dist
@@ -169,7 +170,8 @@ function short_vectors_affine(gram::MatrixElem, v::MatrixElem, alpha::fmpq, d)
   Q = change_base_ring(QQ, Q)
   b = change_base_ring(QQ, transpose(b))
   cv = quadratic_triple(-Q, -b,-QQ(c),equal=true)
-  cv = [transpose(x)+transpose(matrix(u))*K for u in cv]
+  xt = transpose(x)
+  cv = [xt+matrix(ZZ,1,nrows(Q),u)*K for u in cv]
   @hassert :K3Auto 1 all((v*gram*transpose(u))[1,1]==alpha for u in cv)
   @hassert :K3Auto 1 all((u*gram*transpose(u))[1,1]== d for u in cv)
   return cv #[u for u in cv if (u*gram*transpose(u))[1,1]==d]
@@ -208,8 +210,13 @@ function separating_hyperplanes(gram::fmpq_mat, v::fmpq_mat, h::fmpq_mat, d)
   s = solve_left(bW, v*prW) * gramW
   Q = gramW + transpose(s)*s*ch*cv^-2
 
-  S_W = quadratic_triple(Q, zero_matrix(QQ,n-1,1), d)
-  S_W = [transpose(matrix(x))*bW for x in S_W]
+  @vprint :K3Auto 4 Q
+  LQ = Zlattice(gram=-Q*denominator(Q))
+  S_W = [x[1] for x in short_vectors(LQ,  abs(d*denominator(Q)))]
+  append!(S_W,[-x for x in S_W])
+  push!(S_W, 0*S_W[1])
+  #S_W = quadratic_triple(Q, zero_matrix(QQ,n-1,1), d)
+  S_W = [matrix(ZZ,1,nrows(Q),x)*bW for x in S_W]
   S = fmpq_mat[]
   h = change_base_ring(QQ,h)
   for rp in S_W
@@ -458,7 +465,8 @@ function alg58(data::BorcherdsData, w::fmpz_mat)
     c = (transpose(x)*gram*x)[1,1] - d
     # solve the quadratic triple
     cv = quadratic_triple(-Q, -b,-QQ(c),equal=true)
-    cv = [(transpose(x)+transpose(matrix(u))*K) for u in cv]
+    xt = transpose(x)
+    cv = [xt+matrix(ZZ,1,nrows(Q),u)*K for u in cv]
     @hassert :K3Auto 1 all((u*w)[1,1]==alpha for u in cv)
     @hassert :K3Auto 1 all((u*gram*transpose(u))[1,1]== d for u in cv)
     Sdual_na = [u*basis_matrix(SSdual) for u in cv]
@@ -687,18 +695,12 @@ function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=t
   prS = ibSR*I[:,1:rank(S)]#*basis_matrix(S)
   @assert prS[rank(S)+1,:]==0
 
-  m = maximum(diagonal(-gram_matrix(R)))
-  if m > 6
-    @vprint :K3Auto 2 "skipping orthogonal group computation since the diagonal contains $(m)\n"
-    # otherwise we run out of memory ....
-    # TODO: Improve orthogonal group computation using a decompositon
-    compute_OR = false
-  end
 
   if compute_OR
-    @vprint :K3Auto 3 "computing orthogonal group\n"
+    dd = diagonal(gram_matrix(R))
+    @vprint :K3Auto 2 "computing orthogonal group\n"
     OR = orthogonal_group_decomp(R)
-    @vprint :K3Auto 3 "done\n"
+    @vprint :K3Auto 2 "done\n"
     DR = discriminant_group(R)
     ODR = orthogonal_group(DR)
     imOR = [ODR(hom(DR,DR,[DR(lift(d)*f) for d in gens(DR)])) for f in gens(OR)]
@@ -882,19 +884,26 @@ function span_in_S(L, S, weyl)
   return QQDcapS
 end
 
-function nondeg_weyl_new(L::ZLat, S::ZLat, u0::fmpq_mat, weyl::fmpq_mat, ample0::fmpq_mat, perturbation_factor=1000)
+function weyl_vector_non_degenerate(L::ZLat, S::ZLat, u0::fmpq_mat, weyl::fmpq_mat, ample0::fmpq_mat, perturbation_factor=1000)
   V = ambient_space(L)
   ample = ample0
   u = u0
 
-  separating_walls = separating_hyperplanes(L, u, ample, -2)
 
+  @vprint :K3Auto 2 "moving ample class\n"
+  separating_walls = separating_hyperplanes(L, u, ample, -2)
   u, weyl = chain_reflect(V, ample, u, weyl, separating_walls)
+
 
   QQDcapS = span_in_S(L,S,weyl)
 
   N = Hecke.orthogonal_submodule(L, QQDcapS)
+  N = lll(N)
+  @vprint :K3Auto 2 "computing the relevant roots\n"
+  @vprint :K3Auto 3 "$(gram_matrix(N))\n"
+
   sv = short_vectors(N^(-1//1), 2)
+  @vprint :K3Auto 2 "done\n"
   relevant_roots = [matrix(QQ,1,rank(N),a[1])*basis_matrix(N) for a in sv]
   T = Hecke.orthogonal_submodule(S, QQDcapS)
   if rank(T)==0
@@ -1187,7 +1196,7 @@ function preprocessingK3Auto(S, n)
   if inner_product(V,weyl,h)[1,1]<0
     h = -h
   end
-  weyl1,u,hh = oscar.nondeg_weyl_new(L,S,u0, weyl,h)
+  weyl1,u,hh = oscar.weyl_vector_non_degenerate(L,S,u0, weyl,h)
   return L,S,weyl1#L,S,u0, weyl,weyl1, h
 end
 
@@ -1210,91 +1219,7 @@ function parse_zero_entropy(filename="/home/simon/Dropbox/Math/MyPapers/zero ent
   return res
 end
 
-function root_type(L::ZLat)
-  return _connected_components(root_sublattice(L))
-end
 
-function _connected_components(L::ZLat)
-  L = lll(L)
-  V = ambient_space(L)
-  B = basis_matrix(L)
-  B = [B[i,:] for i in 1:nrows(B)]
-  C = fmpq_mat[]
-  SS = ZLat[]
-  ADE = Tuple{Symbol,Int64}[]
-  while length(B) > 0
-    CC = fmpq_mat[]
-    b = pop!(B)
-    push!(CC, b)
-    flag = true
-    while flag
-      flag = false
-      for c in B
-        if any([inner_product(V,a,c)!=0 for a in CC])
-          push!(CC,c)
-          deleteat!(B,findfirst(==(c),B))
-          flag = true
-          break
-        end
-      end
-    end
-    S = lattice(ambient_space(L),reduce(vcat,CC))
-    ade, trafo = ADE_type_with_isometry(S)
-    push!(ADE, ade)
-    BS = trafo*basis_matrix(S)
-    S = lattice(ambient_space(L),BS)
-    push!(C, BS)
-    push!(SS,S)
-  end
-  c = reduce(vcat, C)
-  @hassert :K3Auto 1 nrows(c)==rank(L)
-  return lattice(V, c), ADE,SS
-end
-
-
-function ADE_type(G)
-  r = rank(G)
-  d = abs(det(G))
-  if r == 8 && d==1
-    return (:E,8)
-  end
-  if r == 7 && d == 2
-    return (:E,7)
-  end
-  if r == 6 && d ==3
-    return (:E,6)
-  end
-  if d == r + 1
-    return (:A, r)
-  end
-  if d == 4
-    return (:D, r)
-  end
-  error("not a definite root lattice")
-end
-
-function ADE_type_with_isometry(L)
-  ADE = ADE_type(gram_matrix(L))
-  R = root_lattice(ADE...)
-  e = sign(gram_matrix(L)[1,1])
-  if e == -1
-    R = rescale(R,-1)
-  end
-  t, T = is_isometric(R,L,ambient_representation=false)
-  @hassert :K3Auto 1 t
-  return ADE, T
-end
-
-function root_sublattice(L::ZLat)
-  V = ambient_space(L)
-  if is_negative_definite(L)
-    L = rescale(L,-1)
-  end
-  sv = matrix(ZZ,reduce(hcat,[a[1] for a in short_vectors(L, 2)]))
-  sv = transpose(sv)
-  sv = hnf(sv)[1:rank(L),:]*basis_matrix(L)
-  return lattice(V,sv)
-end
 
 # 23 constructions of the leech lattice
 function coxeter_number(ADE::Symbol, n)
@@ -1331,7 +1256,7 @@ function highest_root(ADE::Symbol, n)
   return w
 end
 
-function weyl_vector(R::ZLat)
+function _weyl_vector(R::ZLat)
   weyl = matrix(ZZ,1,rank(R),ones(1,rank(R)))*inv(gram_matrix(R))
   return weyl*basis_matrix(R)
 end
@@ -1341,12 +1266,12 @@ function leech_from_root_lattice(N::ZLat)
   # we follow Ebeling
   # there seem to be some signs wrong in Ebeling?
   V = ambient_space(N)
-  ADE, ade, RR = root_type(N)
+  ADE, ade, RR = root_lattice_recognition_fundamental(N)
   F = basis_matrix(ADE)
   for i in 1:length(ade)
     F = vcat(F, -highest_root(ade[i]...)*basis_matrix(RR[i]))
   end
-  rho = sum(weyl_vector(r) for r in RR)
+  rho = sum(_weyl_vector(r) for r in RR)
   h = coxeter_number(ade[1]...)
   @hassert :K3Auto 1 inner_product(V,rho,rho)== 2*h*(h+1)
   @hassert :K3Auto 1 all(h==coxeter_number(i...) for i in ade)
@@ -1386,6 +1311,7 @@ end
 
 function has_zero_entropy(S; rank_unimod=26, preprocessing_only = false)
   L,S,iS,R,iR = oscar.embed_in_unimodular(S,rank_unimod)
+  @assert length(short_vectors(rescale(R,-1),2))>0
   V = ambient_space(L)
   U = lattice(V,basis_matrix(S)[1:2, :])
   @hassert :K3Auto 1 det(U)==-1
@@ -1422,7 +1348,7 @@ function has_zero_entropy(S; rank_unimod=26, preprocessing_only = false)
     end
     @vprint :K3Auto 1 "found ample class $(h)\n"
     @vprint :K3Auto 1 "computing an S-non-degenerate weyl vector\n"
-    weyl1,u1 = oscar.nondeg_weyl_new(L,S,u0,weyl,h)
+    weyl1,u1 = oscar.weyl_vector_non_degenerate(L,S,u0,weyl,h)
     if is_S_nondegenerate(L,S,weyl1)
       weyl = weyl1
       break
@@ -1490,48 +1416,6 @@ function myin(v, L::ZLat)
   return all(denominator(i)==1 for i in v*inverse_basis_matrix(L))
 end
 
-function glue_map(L,S,R)
-  rem = Hecke.orthogonal_submodule(lattice(ambient_space(L)),S+R)
-  bSR = vcat(basis_matrix(S),basis_matrix(R),basis_matrix(rem))
-  ibSR = inv(bSR)
-  I = identity_matrix(QQ,degree(L))
-  prS = ibSR*I[:,1:rank(S)]*basis_matrix(S)
-  prR = ibSR*I[:,rank(S)+1:rank(R)+rank(S)]*basis_matrix(R)
-  bL = basis_matrix(L)
-  DS = discriminant_group(S)
-  DR = discriminant_group(R)
-  gens = Hecke.TorQuadModElem[]
-  imgs = Hecke.TorQuadModElem[]
-  for i in 1:rank(L)
-    d = bL[i,:]
-    g = DS(vec(d*prS))
-    if all(0==i for i in lift(g))
-      continue
-    end
-    push!(gens,g)
-    push!(imgs,DR(vec(d*prR)))
-  end
-  HS,iS = sub(DS,gens)
-  HR,iR = sub(DR,imgs)
-  glue_map = hom(HS, HR, [HR(lift(i)) for i in imgs])
-  @assert overlattice(glue_map) == L
-  return glue_map,iS,iR
-end
-
-function overlattice(glue_map)
-  S = relations(domain(glue_map))
-  R = relations(codomain(glue_map))
-  glue = [lift(g)+lift(glue_map(g)) for g in gens(domain(glue_map))]
-  z = zero_matrix(QQ,0,degree(S))
-  glue = reduce(vcat,[matrix(QQ,1,degree(S),g) for g in glue],init=z)
-  glue = vcat(basis_matrix(S+R),glue)
-  glue = FakeFmpqMat(glue)
-  B = hnf(glue)
-  B = QQ(1,denominator(glue))*change_base_ring(QQ,numerator(B))
-  return lattice(ambient_space(S),B[end-rank(S)-rank(R)+1:end,:])
-end
-
-
 function orthogonal_group_decomp(L)
   if gram_matrix(L)[1,1]<0
     L = rescale(L,-1)
@@ -1546,46 +1430,67 @@ function orthogonal_group_decomp(L)
   h = h[1:rank(h),:]*basis_matrix(L)
   M1 = lattice(V,h)
   if rank(M1)==rank(L)
-    return M1
+    if M1 == L
+      return orthogonal_group(M1)
+    else
+      # L is generated by its shortest vectors only up to finite index
+      G = orthogonal_group(M1)
+      return stabilizer(G, L, on_lattices)
+    end
   end
   M2 = lll(Hecke.orthogonal_submodule(L,M1))
   phi,i1,i2 = glue_map(L,M1,M2)
 
   H1 = domain(phi)
   H2 = codomain(phi)
+  @vprint :K3Auto 2 "Computing orthogonal groups \n"
   O1 = orthogonal_group(M1)
   O2 = orthogonal_group(M2)
+
+  F = free_module(QQ, degree(L))
+  sv_decomp = [F(matrix(QQ,1,rank(M1),v[1])*basis_matrix(M1)) for v in short_vectors(M1, mi)]
+  append!(sv_decomp, [F(matrix(QQ,1,rank(M2),v[1])*basis_matrix(M2)) for v in short_vectors(M2, ma)])
+
+  if order(H1)==1
+    # no glue
+    # somehow avoids an infinite recursion in gap
+    gensG = matrix.(gens(O1))
+    append!(gensG, matrix.(gens(O2)))
+    G =  matrix_group(gensG)
+    set_nice_monomorphism(L, G, sv_decomp)
+    return G
+  end
 
   # could also be done on the level of discriminant groups
   # this leads to too many generators
   # ... and reducing their number seems infeasible
   # first project to the discriminant_group and then lift?
-  G1,_ = stabilizer(O1,cover(H1), on_sublattices)
-  G2,_ = stabilizer(O2,cover(H2), on_sublattices)
+  @vprint :K3Auto 2 "Computing stabilizers \n"
+  G1,_ = stabilizer(O1,cover(H1), on_lattices)
+  G2,_ = stabilizer(O2,cover(H2), on_lattices)
   set_nice_monomorphism(M1,G1)
   set_nice_monomorphism(M2,G2)
 
   G1q =  _orthogonal_group(H1, fmpz_mat[hom(H1,H1,Hecke.TorQuadModElem[H1(lift(x)*matrix(g)) for x in gens(H1)]).map_ab.map for g in gens(G1)])
   G2q =  _orthogonal_group(H2, fmpz_mat[hom(H2,H2,Hecke.TorQuadModElem[H2(lift(x)*matrix(g)) for x in gens(H2)]).map_ab.map for g in gens(G2)])
 
-
+  # workaround a recursion trap in gap
   psi1 = hom(G1, G1q, gens(G1q), check=false)
   psi2 = hom(G2, G2q, gens(G2q), check=false)
-
+  @vprint :K3Auto 2 "Computing the kernel \n"
   K = [matrix(g) for g in gens(kernel(psi1)[1])]
-
+  @vprint :K3Auto 2 "Computing the kernel part 2\n"
   append!(K,[matrix(g) for g in gens(kernel(psi2)[1])])
+  @vprint :K3Auto 2 "Lifting \n"
   append!([preimage(psi1,g)*preimage(psi2, G2q(inv(phi)*hom(g)*phi)) for g in gens(G1q)])
   G = matrix_group(K)
-  @assert all(on_sublattices(L,g)==L for g in gens(G))
-  F = free_module(QQ, degree(L))
-  sv_decomp = [F(matrix(QQ,1,rank(M1),v[1])*basis_matrix(M1)) for v in short_vectors(M1, mi)]
-  append!(sv_decomp, [F(matrix(QQ,1,rank(M2),v[1])*basis_matrix(M2)) for v in short_vectors(M2, ma)])
+  @assert all(on_lattices(L,g)==L for g in gens(G))
   set_nice_monomorphism(L,G, sv_decomp)
+  @vprint :K3Auto 2 "Done \n"
   return G
 end
 
-function on_sublattices(L, g::MatrixGroupElem{fmpq,fmpq_mat})
+function on_lattices(L, g::MatrixGroupElem{fmpq,fmpq_mat})
   V = ambient_space(L)
   return lattice(V,basis_matrix(L)*matrix(g), check=false)
 end

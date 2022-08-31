@@ -17,7 +17,7 @@ mutable struct BorcherdsData
   SS::ZLat
   R::ZLat
   deltaR::Vector{fmpz_mat}
-  prRdelta
+  prRdelta::Vector{Tuple{fmpq_mat,fmpq}}
   membership_test
   gramL::fmpz_mat
   gramS::fmpz_mat
@@ -120,12 +120,11 @@ function quadratic_triple(Q, b, c; algorithm=:short_vectors, equal=false)
   if algorithm == :short_vectors
     L, p, dist = Hecke._convert_type(Q, b, QQ(c))
     #@vprint :K3Auto 1 ambient_space(L), basis_matrix(L), p, dist
-    cv = Hecke.closest_vectors(L, p, dist, check=false, equal=equal)
-    #@show isone(basis_matrix(L)),gram_matrix(L),p,dist
-  end
-  # using :pqt seems unfeasible
-  if algorithm == :pqt
-    cv = Hecke.closest_vectors(Q,b,c)#, check=false)
+    if equal
+      cv = Hecke.close_vectors(L, vec(p), dist, dist, check=false)
+    else
+      cv = Hecke.close_vectors(L, vec(p), dist, check=false)
+    end
   end
   return cv
 end
@@ -171,7 +170,7 @@ function short_vectors_affine(gram::MatrixElem, v::MatrixElem, alpha::fmpq, d)
   b = change_base_ring(QQ, transpose(b))
   cv = quadratic_triple(-Q, -b,-QQ(c),equal=true)
   xt = transpose(x)
-  cv = [xt+matrix(ZZ,1,nrows(Q),u)*K for u in cv]
+  cv = [xt+matrix(ZZ,1,nrows(Q),u[1])*K for u in cv]
   @hassert :K3Auto 1 all((v*gram*transpose(u))[1,1]==alpha for u in cv)
   @hassert :K3Auto 1 all((u*gram*transpose(u))[1,1]== d for u in cv)
   return cv #[u for u in cv if (u*gram*transpose(u))[1,1]==d]
@@ -337,7 +336,7 @@ function alg58(L::ZLat, S::ZLat, R::ZLat,prRdelta, w; is_S_nondeg=true)
   Rdual = dual(R)
   Sdual = dual(S)
   rkR = rank(R)
-  delta_w = Tuple{fmpq_mat,fmpq_mat}[]
+  delta_w = fmpq_mat[]
   for c in n_R
     cm = -c
     for (vr0,vsquare) in prRdelta
@@ -355,7 +354,7 @@ function alg58(L::ZLat, S::ZLat, R::ZLat,prRdelta, w; is_S_nondeg=true)
         for vs in Sdual_na
           vv = vs +  vr
           if myin(vec(vv),L)
-            push!(delta_w,(vs, vv))
+            push!(delta_w, vs)
           end
         end
       end
@@ -368,7 +367,7 @@ end
 
 function alg58(L::ZLat, S::ZLat, R::ZLat, w::MatrixElem; is_S_nondeg=true)
   Rdual = dual(R)
-  sv = short_vectors(rescale(Rdual,-1), 2)
+  sv = short_vectors(rescale(Rdual, -1), 2)
   # not storing the following for efficiency
   # append!(sv,[(-v[1],v[2]) for v in sv])
   # but for convenience we include zero
@@ -376,7 +375,7 @@ function alg58(L::ZLat, S::ZLat, R::ZLat, w::MatrixElem; is_S_nondeg=true)
   push!(sv,(zeros(T, rank(Rdual)), QQ(0)))
   rkR = rank(R)
   prRdelta = [(matrix(QQ, 1, rkR, v[1])*basis_matrix(Rdual),v[2]) for v in sv]
-  return alg58(L,S,R,prRdelta,w, is_S_nondeg=is_S_nondeg)
+  return alg58(L, S, R, prRdelta, w, is_S_nondeg=is_S_nondeg)
 end
 
 
@@ -398,7 +397,7 @@ function alg58(data::BorcherdsData, w::fmpz_mat)
   @hassert :K3Auto 2 basis_matrix(data.L)==1
   n_R = [QQ(i)//d for i in (-2*d+1):0 if mod(d*i,2)==0]
   SSdual = dual(data.SS)
-  delta_w = Tuple{fmpq_mat,fmpq_mat}[]
+  delta_w = fmpq_mat[]
   wS = w*data.prS
   #wS = solve_left(gram_matrix(S),w*gram_matrix(V)*transpose(basis_matrix(S)))
   Vw = data.gramL*transpose(w)
@@ -439,8 +438,8 @@ function alg58(data::BorcherdsData, w::fmpz_mat)
   # short_vectors_affine(gram::MatrixElem, v::MatrixElem, alpha::fmpq, d)
   # to avoid repeated calculation of the same stuff e.g. K and Q
   # find a solution <x,v> = alpha with x in L if it exists
-  w = transpose(wS)
-  tmp = FakeFmpqMat(w)
+  ww = transpose(wS)
+  tmp = FakeFmpqMat(ww)
   wn = numerator(tmp)
   wd = denominator(tmp)
   _, K = left_kernel(wn)
@@ -450,38 +449,40 @@ function alg58(data::BorcherdsData, w::fmpz_mat)
   # now I want to formulate this as a cvp
   # (x +y K) gram (x+yK) ==d
   # (x
-  GK = gram*transpose(K)
-  Q = K * GK
-  #  Qf = change_base_ring(ZZ,Q*denominator(Q))
+  KG = K*gram
+  Q = -KG * transpose(K)
+  #@show sum(length.(values(cvp_inputs)))
 
+  B = basis_matrix(SSdual)
+  KB = K*B
   for (alpha,d) in keys(cvp_inputs)
     #Sdual_na = short_vectors_affine(SSdual, wS, a, b)
-    b, x = can_solve_with_solution(transpose(wn), matrix(ZZ, 1, 1, [alpha*wd]))
-    if !b
+    can_solve, x = can_solve_with_solution(transpose(wn), matrix(ZZ, 1, 1, [alpha*wd]))
+    if !can_solve
       continue
     end
-    b = transpose(x) * GK
-    b = transpose(b)
+    x = change_base_ring(ZZ,x)
+    b = -KG*x
     c = (transpose(x)*gram*x)[1,1] - d
     # solve the quadratic triple
-    cv = quadratic_triple(-Q, -b,-QQ(c),equal=true)
-    xt = transpose(x)
-    cv = [xt+matrix(ZZ,1,nrows(Q),u)*K for u in cv]
-    @hassert :K3Auto 1 all((u*w)[1,1]==alpha for u in cv)
-    @hassert :K3Auto 1 all((u*gram*transpose(u))[1,1]== d for u in cv)
-    Sdual_na = [u*basis_matrix(SSdual) for u in cv]
+    cv = quadratic_triple(Q, b,-QQ(c),equal=true)
+    xtB = transpose(x)*B
+    Sdual_na1 = [xtB+matrix(ZZ, 1, nrows(Q), u)*KB for (u,_) in cv]
+    Sdual_na2 = [vs*basis_matrix(data.S) for vs in Sdual_na1]
+
     for vr in cvp_inputs[(alpha,d)]
-      for vs in Sdual_na
-        vv = vs*basis_matrix(data.S) +  vr
+      for i in 1:length(Sdual_na1)
+        v = Sdual_na2[i]
+        vv =  v +  vr
         if denominator(vv)==1
-          push!(delta_w, (vs, vv))
+          push!(delta_w, Sdual_na1[i])
         end
       end
     end
   end
 
   # the chamber should intersect the boundary only at the QQ-rational points
-  @hassert :K3Auto 2 rank(S) == rank(reduce(vcat,[s[1] for s in delta_w]))
+  @hassert :K3Auto 2 rank(S) == rank(reduce(vcat,[s for s in delta_w]))
   return delta_w
 end
 
@@ -504,7 +505,7 @@ function walls_of_chamber(data::BorcherdsData, w)
     d = rank(data.S)
     walls = Vector{fmpz_mat}(undef,d)
     for i in 1:d
-      vs = numerator(FakeFmpqMat(walls1[i][1]))
+      vs = numerator(FakeFmpqMat(walls1[i]))
       g = gcd(vec(vs))
       if g != 1
         vs = divexact(vs, g)
@@ -514,7 +515,7 @@ function walls_of_chamber(data::BorcherdsData, w)
     return walls
   end
   i = zero_matrix(QQ, 0, degree(data.SS))
-  D = reduce(vcat, (v[1] for v in walls1), init=i)
+  D = reduce(vcat, (v for v in walls1), init=i)
   P = positive_hull(D)
   r = rays(P)
   d = length(r)
@@ -537,7 +538,7 @@ function is_S_nondegenerate(L::ZLat, S::ZLat, w::fmpq_mat)
   Delta_w = alg58(L, S, R, w; is_S_nondeg=false)
   V = ambient_space(L)
   G = gram_matrix(V)
-  prSDelta_w = [v[1]*G for v in Delta_w]
+  prSDelta_w = [v*G for v in Delta_w]
   i = zero_matrix(QQ,0,degree(S))
   D = reduce(vcat,prSDelta_w,init=i)
   P = positive_hull(D)
@@ -549,7 +550,7 @@ function inner_point_in_S(L::ZLat, S::ZLat, w::fmpq_mat)
   Delta_w = alg58(L, S, R, w)
   V = ambient_space(L)
   G = gram_matrix(V)
-  prSDelta_w = [v[1]*G*transpose(basis_matrix(S)) for v in Delta_w]
+  prSDelta_w = [v*G*transpose(basis_matrix(S)) for v in Delta_w]
   i = zero_matrix(QQ,0,rank(S))
   D = reduce(vcat,prSDelta_w,init=i)
   P = positive_hull(D)
@@ -557,7 +558,7 @@ function inner_point_in_S(L::ZLat, S::ZLat, w::fmpq_mat)
   @hassert :K3Auto 1 is_pointed(Pd)
   h = sum(rays(Pd))
   h = matrix(QQ,1,rank(S),collect(h))*basis_matrix(S)
-  @hassert :K3Auto 1 all(0<inner_product(V,v[1],h)[1,1] for v in Delta_w)
+  @hassert :K3Auto 1 all(0<inner_product(V,v,h)[1,1] for v in Delta_w)
   return h
 end
 
@@ -570,12 +571,12 @@ Algorithm 5.13 in [Shi]
 """
 function unproject_wall(data::BorcherdsData, vS::fmpz_mat)
   d = gcd(vec(vS*data.gramS))
-  v = QQ(1//d)*(vS*basis_matrix(data.S))  # primitive in Sdual
+  v = QQ(1,d)*(vS*basis_matrix(data.S))  # primitive in Sdual
   vsq = QQ((vS*data.gramS*transpose(vS))[1,1],d^2)
 
   @hassert :K3Auto 1 vsq>=-2
   rkR = rank(data.R)
-  Pv = copy(data.deltaR)  # TODO: do these root matter at all?
+  Pv = copy(data.deltaR)
   for alpha in 1:Int64(floor(sqrt(Float64(-2//vsq))))
     c = 2 + alpha^2*vsq
     alphav = alpha*v
@@ -605,29 +606,33 @@ function adjacent_chamber(D::Chamber, v)
   gramL = D.data.gramL
   dimL = ncols(gramL)
   Pv = unproject_wall(D.data, v)
+  l = length(Pv)
   @hassert :K3Auto 1 length(Pv) == length(unique(Pv))
-  a = 10000
+  a = 1000000
   @label getu
-  a = 10*a
-  rep = Tuple{Int,fmpq}[]
+  a = 2*a
+  rep = Array{Tuple{Int,fmpq}}(undef,l)
   u = matrix(ZZ, 1, dimL, rand(-a:a, dimL))
   Vw = gramL*transpose(D.weyl_vector)
   Vu = gramL*transpose(u)
   for i in 1:length(Pv)
     r = Pv[i]
-    s = (r*Vu)[1,1]//(r*Vw)[1,1]
-    if any(x[2]==s for x in rep)
+    s = divexact!((r*Vu)[1,1],(r*Vw)[1,1])
+    if any(rep[j][2]==s for j in 1:i-1)
       @goto getu
     end
-    push!(rep,(i,s))
+    rep[i] = (i,s)
   end
   @hassert :K3Auto 2 length(unique([r[2] for r in rep]))==length(rep)
   sort!(rep, by=x->x[2])
-  w = D.weyl_vector
+  w = deepcopy(D.weyl_vector)
   for (i,s) in rep
     r = Pv[i]
     @hassert :K3Auto 3 (r*gramL*transpose(r))[1,1]==-2
-    w = w + (r*gramL*transpose(w))[1,1]*r
+    g = (r*gramL*transpose(w))[1,1]
+    #w = w + g*r
+    # mul!(r,g) this would modify Pv and thus D.data.deltaR
+    add!(w,w,g*r)
   end
   return Chamber(D.data, w, v)
 end
@@ -699,7 +704,7 @@ function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=t
   if compute_OR
     dd = diagonal(gram_matrix(R))
     @vprint :K3Auto 2 "computing orthogonal group\n"
-    OR = orthogonal_group_decomp(R)
+    OR = orthogonal_group(R)
     @vprint :K3Auto 2 "done\n"
     DR = discriminant_group(R)
     ODR = orthogonal_group(DR)
@@ -868,7 +873,7 @@ function span_in_S(L, S, weyl)
   V = ambient_space(L)
   Delta_w = alg58(L, S, R, weyl; is_S_nondeg=false)
   G = gram_matrix(V)
-  prSDelta_w = [v[1]*G for v in Delta_w]
+  prSDelta_w = [v*G for v in Delta_w]
   i = zero_matrix(QQ, 0, degree(S))
   R = Hecke.orthogonal_submodule(L, S)
   Ddual = reduce(vcat, prSDelta_w, init=i)
@@ -1137,7 +1142,7 @@ function find_section(L::ZLat, f)
     a = QQ(1)
     cv = []
     while true
-      cv = Hecke.closest_vectors(Kl,-sK, a)
+      cv = Hecke.close_vectors(Kl, vec(-sK), a, check=false)
       if length(cv)>0
         break
       end
@@ -1145,8 +1150,8 @@ function find_section(L::ZLat, f)
     end
     sK = transpose(sK)
     v0 = 0
-    for v in cv
-      v = matrix(QQ,1,rank(Kl),v)
+    for (v,_) in cv
+      v = matrix(QQ, 1, rank(Kl), v)
       v1 = v+sK
       aa = (v1*gram_matrix(Kl)*transpose(v1))[1,1]
       if aa < a
@@ -1279,10 +1284,10 @@ function leech_from_root_lattice(N::ZLat)
   v = QQ(1,h)*transpose(rhoB)
   A = Zlattice(gram=gram_matrix(N))
   c = QQ(2*(1+1//h))
-  sv = [matrix(QQ,1,24,vec(v)-i)*basis_matrix(N) for i in Hecke.closest_vectors(A, v ,c,equal=true)]
+  sv = [matrix(QQ,1,24,vec(v)-i)*basis_matrix(N) for (i,_) in Hecke.close_vectors(A, vec(v) ,c,c, check=false)]
   @hassert :K3Auto 1 all(inner_product(V,i,i)==2*(1+1//h) for i in sv)
   @hassert :K3Auto 1 length(sv)^2 == abs(det(ADE))
-  G = reduce(vcat,sv)
+  G = reduce(vcat,(i for i in sv))
   FG = vcat(F,G)
   K = transpose(kernel(matrix(ZZ,ones(Int,1,nrows(FG))))[2])
   B = change_base_ring(QQ,K)*FG
@@ -1416,99 +1421,3 @@ function myin(v, L::ZLat)
   return all(denominator(i)==1 for i in v*inverse_basis_matrix(L))
 end
 
-function orthogonal_group_decomp(L)
-  if gram_matrix(L)[1,1]<0
-    L = rescale(L,-1)
-  end
-  L = lll(L)
-  V = ambient_space(L)
-  G = gram_matrix(L)
-  mi = minimum(diagonal(G))
-  ma = maximum(diagonal(G))
-  sv = short_vectors(L,mi)
-  h =  hnf(matrix(ZZ,transpose(reduce(hcat,(v[1] for v in sv)))))
-  h = h[1:rank(h),:]*basis_matrix(L)
-  M1 = lattice(V,h)
-  if rank(M1)==rank(L)
-    if M1 == L
-      return orthogonal_group(M1)
-    else
-      # L is generated by its shortest vectors only up to finite index
-      G = orthogonal_group(M1)
-      return stabilizer(G, L, on_lattices)
-    end
-  end
-  M2 = lll(Hecke.orthogonal_submodule(L,M1))
-  phi,i1,i2 = glue_map(L,M1,M2)
-
-  H1 = domain(phi)
-  H2 = codomain(phi)
-  @vprint :K3Auto 2 "Computing orthogonal groups \n"
-  O1 = orthogonal_group(M1)
-  O2 = orthogonal_group(M2)
-
-  F = free_module(QQ, degree(L))
-  sv_decomp = [F(matrix(QQ,1,rank(M1),v[1])*basis_matrix(M1)) for v in short_vectors(M1, mi)]
-  append!(sv_decomp, [F(matrix(QQ,1,rank(M2),v[1])*basis_matrix(M2)) for v in short_vectors(M2, ma)])
-
-  if order(H1)==1
-    # no glue
-    # somehow avoids an infinite recursion in gap
-    gensG = matrix.(gens(O1))
-    append!(gensG, matrix.(gens(O2)))
-    G =  matrix_group(gensG)
-    set_nice_monomorphism(L, G, sv_decomp)
-    return G
-  end
-
-  # could also be done on the level of discriminant groups
-  # this leads to too many generators
-  # ... and reducing their number seems infeasible
-  # first project to the discriminant_group and then lift?
-  @vprint :K3Auto 2 "Computing stabilizers \n"
-  G1,_ = stabilizer(O1,cover(H1), on_lattices)
-  G2,_ = stabilizer(O2,cover(H2), on_lattices)
-  set_nice_monomorphism(M1,G1)
-  set_nice_monomorphism(M2,G2)
-
-  G1q =  _orthogonal_group(H1, fmpz_mat[hom(H1,H1,Hecke.TorQuadModElem[H1(lift(x)*matrix(g)) for x in gens(H1)]).map_ab.map for g in gens(G1)])
-  G2q =  _orthogonal_group(H2, fmpz_mat[hom(H2,H2,Hecke.TorQuadModElem[H2(lift(x)*matrix(g)) for x in gens(H2)]).map_ab.map for g in gens(G2)])
-
-  # workaround a recursion trap in gap
-  psi1 = hom(G1, G1q, gens(G1q), check=false)
-  psi2 = hom(G2, G2q, gens(G2q), check=false)
-  @vprint :K3Auto 2 "Computing the kernel \n"
-  K = [matrix(g) for g in gens(kernel(psi1)[1])]
-  @vprint :K3Auto 2 "Computing the kernel part 2\n"
-  append!(K,[matrix(g) for g in gens(kernel(psi2)[1])])
-  @vprint :K3Auto 2 "Lifting \n"
-  append!([preimage(psi1,g)*preimage(psi2, G2q(inv(phi)*hom(g)*phi)) for g in gens(G1q)])
-  G = matrix_group(K)
-  @assert all(on_lattices(L,g)==L for g in gens(G))
-  set_nice_monomorphism(L,G, sv_decomp)
-  @vprint :K3Auto 2 "Done \n"
-  return G
-end
-
-function on_lattices(L, g::MatrixGroupElem{fmpq,fmpq_mat})
-  V = ambient_space(L)
-  return lattice(V,basis_matrix(L)*matrix(g), check=false)
-end
-
-function set_nice_monomorphism(L, G, svF=Nothing)
-  if svF === Nothing
-    sv = short_vectors(L,minimum(diagonal(gram_matrix(L))))
-    F = free_module(QQ,degree(L))
-    svF = [F(matrix(QQ,1,rank(L),x[1])*basis_matrix(L)) for x in sv]
-  end
-  # TODO: custom action function for Vectors?
-  phi = action_homomorphism(gset(G,svF))
-  GAP.Globals.SetIsHandledByNiceMonomorphism(G.X,true)
-  GAP.Globals.SetNiceMonomorphism(G.X,phi.map)
-end
-
-#=
-pyexec("L = []",Main)
-pyexec("def callback(new_sol_coord): L.append(new_sol_coord); return True",Main)
-cb = pyeval("callback",Main)
-=#

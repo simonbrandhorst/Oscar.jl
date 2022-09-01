@@ -1,3 +1,6 @@
+############################################################
+# Chamber
+
 @registerSerializationType(Chamber)
 function save_internal(s::SerializerState, D::Chamber)
     return Dict(
@@ -16,7 +19,8 @@ function load_internal(s::DeserializerState, ::Type{Chamber}, dict::Dict)
     return Chamber(data, weyl_vector, parent_wall, walls)
 end
 
-
+############################################################
+# BorcherdsData
 @registerSerializationType(BorcherdsData)
 function save_internal(s::SerializerState, D::BorcherdsData)
     return Dict(
@@ -34,13 +38,12 @@ function load_internal(s::DeserializerState, ::Type{BorcherdsData}, dict::Dict)
     return BorcherdsData(L, S, compute_OR)
 end
 
-
-
-#encodeType(::Type{Hecke.QuadSpace{S,T}}) where {S = "Hecke.QuadSpace{$S,$T}"}
-#reverseTypeMap["Hecke.QuadSpace{S,T}"] = Hecke.QuadSpace{S,T}
+############################################################
+# QuadSpace
+encodeType(::Type{<: Hecke.QuadSpace}) = "Hecke.QuadSpace"
+reverseTypeMap["Hecke.QuadSpace"] = Hecke.QuadSpace
 
 @registerSerializationType(ZLat)
-@registerSerializationType(Hecke.QuadSpace{FlintRationalField,fmpq_mat} where {S,T})
 
 function save_internal(s::SerializerState, V::Hecke.QuadSpace)
     return Dict(
@@ -49,16 +52,15 @@ function save_internal(s::SerializerState, V::Hecke.QuadSpace)
     )
 end
 
-
-function load_internal(s::DeserializerState, ::Type{Hecke.QuadSpace{S,T}}, dict::Dict) where {S,T}
-    F = load_type_dispatch(s, S, dict[:base_ring])
-    gram = load_type_dispatch(s, T, dict[:gram_matrix])
+function load_internal(s::DeserializerState, ::Type{Hecke.QuadSpace}, dict::Dict)
+    F = load_unknown_type(s, dict[:base_ring])
+    gram = load_type_dispatch(s, MatElem, dict[:gram_matrix])
     @assert base_ring(gram)===F
     return quadratic_space(F, gram)
 end
 
-
-
+# We should move this somewhere else at some point, maybe when there is a section
+# on modules
 function save_internal(s::SerializerState, L::ZLat)
     return Dict(
         :basis => save_type_dispatch(s, basis_matrix(L)),

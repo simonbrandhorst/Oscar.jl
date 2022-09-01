@@ -22,7 +22,91 @@ mutable struct BorcherdsData
   gramL::fmpz_mat
   gramS::fmpz_mat
   prS::fmpq_mat
+  compute_OR::Bool
 end
+
+function BorcherdsData(L::ZLat, S::ZLat, compute_OR::Bool=true)
+  # transform L to have the standard basis
+  # we assume that the basis of L is obtained by completing a basis of R
+  # hence we can throw away the R coordinates of a weyl vector when projecting to S
+  vcat(basis_matrix(S),basis_matrix(L))
+
+  L1 = Zlattice(gram=gram_matrix(L))
+  V = ambient_space(L1)
+  S = lattice(V,basis_matrix(S)*inverse_basis_matrix(L))
+
+  #=
+  # the following completes S to a basis....
+  basis = complete_to_basis(change_base_ring(ZZ,basis_matrix(S)),change_base_ring(ZZ,basis_matrix(L1)))
+  L2 = lattice(V, basis)
+  S = lattice(V, basis[1:rank(S),:])
+
+  L3 = Zlattice(gram=gram_matrix(L2))
+  V = ambient_space(L3)
+  S = lattice(V,basis_matrix(S)*inverse_basis_matrix(L2))
+
+  w = change_base_ring(ZZ,w*inverse_basis_matrix(L)*inverse_basis_matrix(L2))
+  L = L3
+  #return L, S, w
+  =#
+  L = L1
+
+
+  SS = Zlattice(gram=gram_matrix(S))
+
+  # precomputations
+  R = lll(Hecke.orthogonal_submodule(L, S))
+  bSR = vcat(basis_matrix(S),basis_matrix(R))
+  ibSR = inv(bSR)
+  I = identity_matrix(QQ,degree(L))
+  prS = ibSR*I[:,1:rank(S)]#*basis_matrix(S)
+  @assert prS[rank(S)+1,:]==0
+
+
+  if compute_OR
+    dd = diagonal(gram_matrix(R))
+    @vprint :K3Auto 2 "computing orthogonal group\n"
+    OR = orthogonal_group(R)
+    @vprint :K3Auto 2 "done\n"
+    DR = discriminant_group(R)
+    ODR = orthogonal_group(DR)
+    imOR = [ODR(hom(DR,DR,[DR(lift(d)*f) for d in gens(DR)])) for f in gens(OR)]
+    DS = discriminant_group(S)
+    DSS = discriminant_group(SS)
+    ODSS = orthogonal_group(DSS)
+    orderimOR = order(sub(ODR,imOR)[1])
+    @vprint :K3Auto 1 "[O(S):G] = $(order(ODSS)//orderimOR)\n"
+    if order(ODR)== orderimOR
+      membership_test = (g->true)
+    else
+      phiSS_S = hom(DSS,DS,[DS(lift(x)*basis_matrix(S)) for x in gens(DSS)])
+      phi,i,j = glue_map(L,S,R)
+      phi = phiSS_S*inv(i)*phi*j
+      img,_ = sub(ODSS,[ODSS(phi*hom(g)*inv(phi)) for g in imOR])
+      ds = degree(SS)
+      membership_test = (g->ODSS(hom(DSS,DSS,[DSS(vec(matrix(QQ, 1, ds, lift(x))*g)) for x in gens(DSS)])) in img)
+    end
+  else
+    membership_test(g) = is_in_G(SS,g)
+  end
+
+  d = exponent(discriminant_group(S))
+  Rdual = dual(R)
+  sv = short_vectors(rescale(Rdual,-1), 2)
+  # not storing the following for efficiency
+  # append!(sv,[(-v[1],v[2]) for v in sv])
+  # but for convenience we include zero
+  T = typeof(sv).parameters[1].parameters[1].parameters[1]
+  push!(sv,(zeros(T, rank(Rdual)), QQ(0)))
+  rkR = rank(R)
+  prRdelta = [(matrix(QQ, 1, rkR, v[1])*basis_matrix(Rdual),v[2]) for v in sv]
+  deltaR = [change_base_ring(ZZ,matrix(QQ, 1, rkR, v[1])*basis_matrix(R)) for v in short_vectors(rescale(R,-1),2)]
+
+  return BorcherdsData(L, S, SS, R, deltaR, prRdelta, membership_test,change_base_ring(ZZ,gram_matrix(L)),change_base_ring(ZZ,gram_matrix(S)),prS,compute_OR)
+end
+
+
+
 
 mutable struct Chamber
   weyl_vector::fmpz_mat
@@ -34,11 +118,21 @@ mutable struct Chamber
   end
 end
 
-function Chamber(data::BorcherdsData, weyl_vector, parent_wall)
+
+function Chamber(data::BorcherdsData, weyl_vector::fmpz_mat, parent_wall::fmpz_mat)
   D = Chamber()
   D.weyl_vector = weyl_vector
   D.parent_wall = parent_wall
   D.data = data
+  return D
+end
+
+function Chamber(data::BorcherdsData, weyl_vector::fmpz_mat, parent_wall::fmpz_mat, walls::Vector{fmpz_mat})
+  D = Chamber()
+  D.weyl_vector = weyl_vector
+  D.parent_wall = parent_wall
+  D.data = data
+  D.walls = walls
   return D
 end
 
@@ -661,86 +755,8 @@ Compute the automorphism group of a K3
 - `w` - initial Weyl vector
 """
 function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=true, max_nchambers=-1)
-  # transform L to have the standard basis
-  # we complete a basis of S to a basis of L
-  vcat(basis_matrix(S),basis_matrix(L))
-  #
-
-  L1 = Zlattice(gram=gram_matrix(L))
-  V = ambient_space(L1)
-  S = lattice(V,basis_matrix(S)*inverse_basis_matrix(L))
-
-  #=
-  # if we complete R to a basis, then we can throw away the last few coords.
-  # the following completes S to a basis....
-  basis = complete_to_basis(change_base_ring(ZZ,basis_matrix(S)),change_base_ring(ZZ,basis_matrix(L1)))
-  L2 = lattice(V, basis)
-  S = lattice(V, basis[1:rank(S),:])
-
-  L3 = Zlattice(gram=gram_matrix(L2))
-  V = ambient_space(L3)
-  S = lattice(V,basis_matrix(S)*inverse_basis_matrix(L2))
-
-  w = change_base_ring(ZZ,w*inverse_basis_matrix(L)*inverse_basis_matrix(L2))
-  L = L3
-  #return L, S, w
-  =#
-
+  data = BorcherdsData(L, S)
   w = change_base_ring(ZZ,w*inverse_basis_matrix(L))
-  L = L1
-
-
-  SS = Zlattice(gram=gram_matrix(S))
-
-  # precomputations
-  R = lll(Hecke.orthogonal_submodule(L, S))
-  bSR = vcat(basis_matrix(S),basis_matrix(R))
-  ibSR = inv(bSR)
-  I = identity_matrix(QQ,degree(L))
-  prS = ibSR*I[:,1:rank(S)]#*basis_matrix(S)
-  @assert prS[rank(S)+1,:]==0
-
-
-  if compute_OR
-    dd = diagonal(gram_matrix(R))
-    @vprint :K3Auto 2 "computing orthogonal group\n"
-    OR = orthogonal_group(R)
-    @vprint :K3Auto 2 "done\n"
-    DR = discriminant_group(R)
-    ODR = orthogonal_group(DR)
-    imOR = [ODR(hom(DR,DR,[DR(lift(d)*f) for d in gens(DR)])) for f in gens(OR)]
-    DS = discriminant_group(S)
-    DSS = discriminant_group(SS)
-    ODSS = orthogonal_group(DSS)
-    orderimOR = order(sub(ODR,imOR)[1])
-    @vprint :K3Auto 1 "[O(S):G] = $(order(ODSS)//orderimOR)\n"
-    if order(ODR)== orderimOR
-      membership_test = (g->true)
-    else
-      phiSS_S = hom(DSS,DS,[DS(lift(x)*basis_matrix(S)) for x in gens(DSS)])
-      phi,i,j = glue_map(L,S,R)
-      phi = phiSS_S*inv(i)*phi*j
-      img,_ = sub(ODSS,[ODSS(phi*hom(g)*inv(phi)) for g in imOR])
-      ds = degree(SS)
-      membership_test = (g->ODSS(hom(DSS,DSS,[DSS(vec(matrix(QQ, 1, ds, lift(x))*g)) for x in gens(DSS)])) in img)
-    end
-  else
-    membership_test(g) = is_in_G(SS,g)
-  end
-
-  d = exponent(discriminant_group(S))
-  Rdual = dual(R)
-  sv = short_vectors(rescale(Rdual,-1), 2)
-  # not storing the following for efficiency
-  # append!(sv,[(-v[1],v[2]) for v in sv])
-  # but for convenience we include zero
-  T = typeof(sv).parameters[1].parameters[1].parameters[1]
-  push!(sv,(zeros(T, rank(Rdual)), QQ(0)))
-  rkR = rank(R)
-  prRdelta = [(matrix(QQ, 1, rkR, v[1])*basis_matrix(Rdual),v[2]) for v in sv]
-  deltaR = [change_base_ring(ZZ,matrix(QQ, 1, rkR, v[1])*basis_matrix(R)) for v in short_vectors(rescale(R,-1),2)]
-
-  data = BorcherdsData(L, S, SS, R, deltaR, prRdelta, membership_test,change_base_ring(ZZ,gram_matrix(L)),change_base_ring(ZZ,gram_matrix(S)),prS)
   # for G-sets
   F = FreeModule(ZZ,rank(S))
   # initialization
@@ -794,12 +810,13 @@ function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=t
       continue
     end
     push!(chambers[fp], D)
-    push!(explored,D)
+    push!(explored, D)
     nchambers = nchambers+1
     @vprint :K3Auto 3 "new weyl vector $(D.weyl_vector)\n"
 
     autD = aut(D)
     autD = [a for a in autD if !isone(a)]
+    # we need the orbits of the walls only
     if length(autD) > 0
       for f in autD
         push!(automorphisms, f)
@@ -815,12 +832,10 @@ function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=t
       # the minus shouldnt be necessary ... but who knows?
       wallsDmodAutD = (v for v in walls(D) if !(v==D.parent_wall || -v==D.parent_wall))
     end
-    # now we need the orbits of the walls only
     # compute the adjacent chambers to be explored
-    # TODO: iterate over orbit representatives only
     for v in wallsDmodAutD
-      # does v come from a -2 curve?
       if -2 == (v*gram_matrix(S)*transpose(v))[1,1]
+        # v comes from a rational curve
         push!(rational_curves, v)
         continue
       end
@@ -1375,6 +1390,9 @@ end
 
 function check_zero_entropy(candidate::ZLat, filename="")
   z, data, K3Autgrp, chambers, rational_curves = has_zero_entropy(candidate)
+  chambers = reduce(append!,values(chambers),init=Chamber[])
+  chambers = [c.weyl_vector for c in chambers]
+  save("$(filename).data", [data.L, data.S, collect(K3Autgrp), chambers, collect(rational_curves)])
   io = open(filename, "w")
   println(io, gram_matrix(candidate))
   if z > 0

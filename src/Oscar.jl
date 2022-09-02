@@ -170,6 +170,8 @@ function __init__()
     __init_group_libraries()
     __init_JuliaData()
     __GAP_info_messages_off()
+    add_assert_scope(:K3Auto)
+    add_verbose_scope(:K3Auto)
 end
 
 const PROJECT_TOML = Pkg.TOML.parsefile(joinpath(@__DIR__, "..", "Project.toml"))

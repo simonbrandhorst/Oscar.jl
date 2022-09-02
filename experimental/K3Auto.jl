@@ -1,10 +1,7 @@
 export weyl_vector, K3Auto, common_invariant, separating_hyperplanes
 
-# somehow doesn't work
-# Hecke.add_assert_scope(:K3Auto)
-# Hecke.add_verbose_scope(:K3Auto)
 # set_assert_level(:K3Auto, 0)
-# set_verbose_level(:K3Auto, 0)
+# set_verbose_level(:K3Auto, 2)
 
 
 ################################################################################
@@ -748,6 +745,12 @@ function complete_to_basis(B::fmpz_mat,C::fmpz_mat)
   return basis
 end
 
+function K3Auto(S::ZLat, n::Integer; kw...)
+  @req n in [10,18,26] "n(=$(n)) must be one of 10,18 or 26"
+  L, S, weyl = preprocessingK3Auto(S, n)
+  A = K3Auto(L,S,weyl; kw...)
+  return A
+end
 
 @doc Markdown.doc"""
 Compute the automorphism group of a K3
@@ -755,7 +758,7 @@ Compute the automorphism group of a K3
 - `w` - initial Weyl vector
 """
 function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=true, max_nchambers=-1)
-  data = BorcherdsData(L, S)
+  data = BorcherdsData(L, S, compute_OR)
   w = change_base_ring(ZZ,w*inverse_basis_matrix(L))
   # for G-sets
   F = FreeModule(ZZ,rank(S))
@@ -798,6 +801,7 @@ function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=t
             C = lattice(rational_span(S),common_invariant(automorphisms)[2])
             d = diagonal(rational_span(C))
             if 0 > maximum(push!([sign(i) for i in d],-1))
+              @vprint :K3Auto 1 "entropy abort \n"
               return data, automorphisms, chambers, rational_curves, false
             end
           end
@@ -846,6 +850,9 @@ function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=t
       return data, automorphisms, chambers, rational_curves, false
     end
   end
+  @vprint :K3Auto "$(length(automorphisms)) automorphism group generators\n"
+  @vprint :K3Auto "$(nchambers) congruence classes of chambers \n"
+  @vprint :K3Auto "$(length(rational_curves)) orbits of rational curves\n"
   return data, automorphisms, chambers, rational_curves, true
 end
 
@@ -1192,11 +1199,17 @@ function preprocessingK3Auto(S, n)
   V = ambient_space(L)
   # find a hyperbolic plane
   G = gram_matrix(L)
-  g,u = oscar.lll_gram_indefinite(change_base_ring(ZZ,G))
-  B = transpose(u)*basis_matrix(L)
+  g1,u1 = lll_gram_indef_with_transform(change_base_ring(ZZ,G))
+  # apparently we need to run lll two times to produce a zero
+  g2,u2 = lll_gram_indef_with_transform(change_base_ring(ZZ,g1))
+  u = u2*u1
+  @assert g2 == u*G*transpose(u)
+  B = u*basis_matrix(L)
+  @show diagonal(inner_product(V,B,B))
+  @show diagonal(g2)
   B = vcat(B[1,:],B[end,:]-B[1,:])
   U = lattice(V, B)
-  @hassert :K3Auto 1 inner_product(V,B,B) == QQ[0 1; 1 -2]
+  @assert inner_product(V,B,B) == QQ[0 1; 1 -2]
   weyl, u0 = oscar.weyl_vector(L, U)
 
   #find a random ample vector ... or use a perturbation of the weyl vector?

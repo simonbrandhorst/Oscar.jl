@@ -1,4 +1,4 @@
-export weyl_vector, K3Auto, common_invariant, separating_hyperplanes
+export weyl_vector, K3Auto, common_invariant, separating_hyperplanes, walls
 
 # set_assert_level(:K3Auto, 0)
 # set_verbose_level(:K3Auto, 2)
@@ -14,12 +14,16 @@ mutable struct BorcherdsData
   SS::ZLat
   R::ZLat
   deltaR::Vector{fmpz_mat}
+  dualDeltaR::Vector{fmpz_mat}
   prRdelta::Vector{Tuple{fmpq_mat,fmpq}}
   membership_test
   gramL::fmpz_mat
   gramS::fmpz_mat
   prS::fmpq_mat
   compute_OR::Bool
+  # TODO: Store temporary variables for the computations
+  # in order to make the core-functions adjacent_chamber and walls
+  # as non-allocating as possible.
 end
 
 @doc Markdown.doc"""
@@ -106,9 +110,11 @@ function BorcherdsData(L::ZLat, S::ZLat, compute_OR::Bool=true)
   push!(sv,(zeros(T, rank(Rdual)), QQ(0)))
   rkR = rank(R)
   prRdelta = [(matrix(QQ, 1, rkR, v[1])*basis_matrix(Rdual),v[2]) for v in sv]
+  gramL = change_base_ring(ZZ,gram_matrix(L))
+  gramS = change_base_ring(ZZ,gram_matrix(S))
   deltaR = [change_base_ring(ZZ,matrix(QQ, 1, rkR, v[1])*basis_matrix(R)) for v in short_vectors(rescale(R,-1),2)]
-
-  return BorcherdsData(L, S, SS, R, deltaR, prRdelta, membership_test,change_base_ring(ZZ,gram_matrix(L)),change_base_ring(ZZ,gram_matrix(S)),prS,compute_OR)
+  dualDeltaR = [gramL*transpose(r) for r in deltaR]
+  return BorcherdsData(L, S, SS, R, deltaR, dualDeltaR, prRdelta, membership_test,gramL,gramS,prS,compute_OR)
 end
 
 
@@ -178,7 +184,7 @@ function Base.show(io::IO, c::Chamber)
   if isdefined(c,:walls)
     print(IOContext(io, :compact => true), "Chamber  in dimension $(length(walls(c)[1])) with $(length(walls(c))) walls")
   else
-    print(IOContext(io, :compact => true), "Chamber: $(c.weyl_vector[1:rank(c.data.S)])")
+    print(IOContext(io, :compact => true), "Chamber: $(c.weyl_vector[1,1:rank(c.data.S)])")
   end
 end
 
@@ -552,22 +558,25 @@ function _alg58(data::BorcherdsData, w::fmpz_mat)
   # collect the cvp inputs to avoid repeated calculation of the same cvp
   cvp_inputs = Dict{Tuple{fmpq,fmpq},Vector{fmpq_mat}}()
   for c in n_R
+    kc = -2-c
     cm = -c
     for (vr,vsquare) in data.prRdelta
       if vsquare != cm
         continue
       end
       a = (vr*Vw)[1,1]
-      if (1-a,-2-c) in keys(cvp_inputs)
-        push!(cvp_inputs[(1-a,-2-c)], vr)
+      key = (1-a,kc)
+      if key in keys(cvp_inputs)
+        push!(cvp_inputs[key], vr)
       else
-        cvp_inputs[(1-a,-2-c)] = [vr]
+        cvp_inputs[key] = [vr]
       end
       if c != 0
-        if (1+a,-2-c) in keys(cvp_inputs)
-          push!(cvp_inputs[(1+a,-2-c)], -vr)
+        key1 = (1+a, kc)
+        if key1 in keys(cvp_inputs)
+          push!(cvp_inputs[key1], -vr)
         else
-          cvp_inputs[(1+a,-2-c)] = [-vr]
+          cvp_inputs[key1] = [-vr]
         end
       end
     end
@@ -596,31 +605,48 @@ function _alg58(data::BorcherdsData, w::fmpz_mat)
   # (x
   KG = K*gram
   Q = -KG * transpose(K)
+  Qi = inv(Q)
+  N = Zlattice(gram=Q,check=false)
+  V = ambient_space(N)
+
   #@show sum(length.(values(cvp_inputs)))
+  tmp = zero_matrix(QQ,1,rank(SSdual))
+
 
   B = basis_matrix(SSdual)
   KB = K*B
-  for (alpha,d) in keys(cvp_inputs)
-    #Sdual_na = short_vectors_affine(SSdual, wS, a, b)
-    can_solve, x = can_solve_with_solution(transpose(wn), matrix(ZZ, 1, 1, [alpha*wd]))
-    if !can_solve
+  for (alpha, d) in keys(cvp_inputs)
+    can_solve_i, x = can_solve_with_solution(transpose(wn), matrix(ZZ, 1, 1, [alpha*wd]))
+    if !can_solve_i
       continue
     end
-    x = change_base_ring(ZZ,x)
-    b = -KG*x
-    c = (transpose(x)*gram*x)[1,1] - d
+    # looks like premature optimization ...
+    x = change_base_ring(QQ, x)
+    b = KG*x
+    transpose!(tmp, x)
+    # c = (transpose(x)*gram*x)[1,1] - d
+    c = (tmp*mul!(x,gram,x))[1,1] - d
+    #cv = quadratic_triple(Q,-b,-c,equal=true)
+    mul!(b, Qi, b)
+    #b = Qi*b
+    v = vec(b)
+    upperbound = inner_product(V,v,v) + c
     # solve the quadratic triple
-    cv = quadratic_triple(Q, b,-QQ(c),equal=true)
-    xtB = transpose(x)*B
-    Sdual_na1 = [xtB+matrix(ZZ, 1, nrows(Q), u)*KB for (u,_) in cv]
+    cv = close_vectors(N, v, upperbound, upperbound, check=false)
+    mul!(tmp,tmp,B)
+    #xtB = transpose(x)*B
+    Sdual_na1 = [matrix(ZZ, 1, nrows(Q), u)*KB for (u,_) in cv]
+    for v in Sdual_na1
+      add!(v,v,tmp)
+    end
     Sdual_na2 = [vs*basis_matrix(data.S) for vs in Sdual_na1]
-
-    for vr in cvp_inputs[(alpha,d)]
-      for i in 1:length(Sdual_na1)
-        v = Sdual_na2[i]
+    for i in 1:length(Sdual_na1)
+      v = Sdual_na2[i]
+      for vr in cvp_inputs[(alpha,d)]
         vv =  v +  vr
         if denominator(vv)==1
           push!(delta_w, Sdual_na1[i])
+          break # delta_w is a set, hence we may break
         end
       end
     end
@@ -705,10 +731,11 @@ end
 
 
 @doc Markdown.doc"""
+    unproject_wall(data::BorcherdsData, vS::fmpz_mat)
 
-Return the (-2)-walls of L containing $v^{perp_S}$.
+Return the (-2)-walls of L containing $v^{perp_S}$ but not $S$.
 
-Algorithm 5.13 in [Shi]
+Based on Algorithm 5.13 in [Shi]
 """
 function unproject_wall(data::BorcherdsData, vS::fmpz_mat)
   d = gcd(vec(vS*data.gramS))
@@ -717,11 +744,14 @@ function unproject_wall(data::BorcherdsData, vS::fmpz_mat)
 
   @hassert :K3Auto 1 vsq>=-2
   rkR = rank(data.R)
-  Pv = copy(data.deltaR)
+  Pv = fmpz_mat[]
   for alpha in 1:Int64(floor(sqrt(Float64(-2//vsq))))
     c = 2 + alpha^2*vsq
     alphav = alpha*v
     for (vr,cc) in data.prRdelta
+      # probably we could speed up the for loop and compute
+      # and compute the result without a membership test
+      # by working modulo ZZ^n directly
       if cc != c
         continue
       end
@@ -745,6 +775,8 @@ Return return the L|S chamber adjacent to `D` via the wall defined by `v`.
 """
 function adjacent_chamber(D::Chamber, v)
   gramL = D.data.gramL
+  dualDeltaR = D.data.dualDeltaR
+  deltaR = D.data.deltaR
   dimL = ncols(gramL)
   Pv = unproject_wall(D.data, v)
   l = length(Pv)
@@ -752,28 +784,54 @@ function adjacent_chamber(D::Chamber, v)
   a = 1000000
   @label getu
   a = 2*a
-  rep = Array{Tuple{Int,fmpq}}(undef,l)
+  rep = Array{Tuple{Int,fmpq,Bool}}(undef,l+length(dualDeltaR))
   u = matrix(ZZ, 1, dimL, rand(-a:a, dimL))
   Vw = gramL*transpose(D.weyl_vector)
   Vu = gramL*transpose(u)
+
+  z = zero_matrix(ZZ,1,1)
   for i in 1:length(Pv)
     r = Pv[i]
-    s = divexact!((r*Vu)[1,1],(r*Vw)[1,1])
+    mul!(z,r, Vw)
+    s = (r*Vu)[1,1]
+    divexact!(s,z[1,1])
     if any(rep[j][2]==s for j in 1:i-1)
       @goto getu
     end
-    rep[i] = (i,s)
+    rep[i] = (i, s, false)
   end
+
+  for i in 1:length(deltaR)
+    r = deltaR[i]
+    mul!(z, r, Vw)
+    s = (r*Vu)[1,1]
+    divexact!(s,z[1,1])
+    if any(rep[j][2]==s for j in 1:i-1)
+      @goto getu
+    end
+    rep[length(Pv)+i] = (i, s, true)
+  end
+
   @hassert :K3Auto 2 length(unique([r[2] for r in rep]))==length(rep)
   sort!(rep, by=x->x[2])
   w = deepcopy(D.weyl_vector)
-  for (i,s) in rep
-    r = Pv[i]
-    @hassert :K3Auto 3 (r*gramL*transpose(r))[1,1]==-2
-    g = (r*gramL*transpose(w))[1,1]
-    #w = w + g*r
-    # mul!(r,g) this would modify Pv and thus D.data.deltaR
-    add!(w,w,g*r)
+  tmp = zero_matrix(ZZ,ncols(w),1)
+  for (i,s,indualDeltaR) in rep
+    if indualDeltaR
+      # saves a matrix multiplication
+      rdual = dualDeltaR[i]
+      r = deltaR[i]
+      mul!(z, w, rdual)
+      addmul!(w, r, z[1,1])
+    else
+      r = Pv[i]
+      #g = (r*gramL*wt)[1,1]
+      #w = w + g*r
+      transpose!(tmp,w)
+      mul!(tmp,gramL,tmp)
+      mul!(z, r, tmp)
+      addmul!(w,r, z[1,1])
+    end
   end
   return Chamber(D.data, w, v)
 end
@@ -1051,7 +1109,7 @@ end
 
 
 @doc Markdown.doc"""
-weyl_vector(L::ZLat, U0::ZLat)
+    weyl_vector(L::ZLat, U0::ZLat)
 
 Return a Weyl vector of `L`.
 
@@ -1268,6 +1326,7 @@ function preprocessingK3Auto(S::ZLat, n::Integer)
   weyl, u0 = oscar.weyl_vector(L, U)
 
   #find a random ample vector ... or use a perturbation of the weyl vector?
+  @vprint :K3Auto 1 "searching a random ample vector in S"
   while true
     h = matrix(ZZ,1,rank(S),rand(-10:10, rank(S)))*basis_matrix(S)
     # confirm that h is in the interior of a weyl chamber,

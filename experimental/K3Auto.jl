@@ -857,7 +857,7 @@ function K3Auto(S::ZLat, n::Integer; kw...)
   @req n in [10,18,26] "n(=$(n)) must be one of 10,18 or 26"
   L, S, weyl = preprocessingK3Auto(S, n)
   A = K3Auto(L,S,weyl; kw...)
-  return A
+  return collect(A[2]),reduce(append!,values(A[3]),init=Chamber[]), collect(A[4])
 end
 
 @doc Markdown.doc"""
@@ -1325,10 +1325,19 @@ function preprocessingK3Auto(S::ZLat, n::Integer)
   @assert inner_product(V,B,B) == QQ[0 1; 1 -2]
   weyl, u0 = oscar.weyl_vector(L, U)
 
+  #project the weyl vector to S.
+  v = u0*gram_matrix(ambient_space(L))*transpose(basis_matrix(S))
+  vv = solve_left(gram_matrix(S),v)
+  c = (vv*gram_matrix(S)*transpose(vv))[1,1]
+  cc = QQ(Int64(floor(sqrt(Float64(c)))))
+  vv = 10//cc * vv
+  vv = matrix(QQ,1, ncols(vv),[round(i) for i in vv])
+
+
   #find a random ample vector ... or use a perturbation of the weyl vector?
-  @vprint :K3Auto 1 "searching a random ample vector in S"
+  @vprint :K3Auto 1 "searching a random ample vector in S\n"
   while true
-    h = matrix(ZZ,1,rank(S),rand(-10:10, rank(S)))*basis_matrix(S)
+    h = (vv+matrix(ZZ,1,rank(S),rand(-10:10, rank(S))))*basis_matrix(S)
     # confirm that h is in the interior of a weyl chamber,
     # i.e. check that Q does not contain any -2 vector and h^2>0
     if inner_product(V,h,h)[1,1]<=0

@@ -1,118 +1,88 @@
-# S is NS of a K3 surface with finite automorphism discriminant_group
-# It has exactly 4 (-2)-curves
-# and the roots are the standard basis vectors.
-# Draw the dual graph
-# It has one symmetry. It is of order 2.
-add_verbose_scope(:K3Auto)
-set_verbose_level(:K3Auto,5)
 
-gram = QQ[-2 1 0 0; 1 -2 1 1; 0 1 -2 1; 0 1 1 -2]
-S = Zlattice(gram=gram)
-# Construct an embedding of S into L \cong L_{10}.
-R = rescale(root_lattice(:E,6),-1)
-SR,iS,iR = orthogonal_sum(S,R)
-V = ambient_space(SR)
-S = lattice(V,basis_matrix(S)*iS.matrix)
-R = lattice(V,basis_matrix(R)*iR.matrix)
-g = gens(discriminant_group(SR))
-i = g[1]+g[2]
-#@assert Hecke.quadratic_product(i)==0 #bug
-Bi = vcat(basis_matrix(SR),matrix(QQ,1,10,lift(i)))
-L = lattice(V,Bi,isbasis=false)
 
-# Find an isomorphism L \cong U + E_8
-f = QQ[0 1 1 1 0 0 0 0 0 0]
-z = QQ[1 0 0 0 0 0 0 0 0 0]
-@assert inner_product(V,f,f)==0
-U = lattice(V,vcat(f,z))
-E8 = Hecke.orthogonal_submodule(L,U)
-e8 = rescale(root_lattice(:E,8),-1)
 
-# normalize the basis
-_,T = isisometric(e8,E8, ambient_representation=false)
-E8 = lattice(ambient_space(E8),T*basis_matrix(E8))
-@assert gram_matrix(E8) == gram_matrix(e8)
-B = vcat(f, z, basis_matrix(E8))
-UE8 = lattice(ambient_space(E8),B)
-Bdual = inv(gram_matrix(ambient_space(UE8))*transpose(B))
+@testset "walls of chamber" begin
+  S = Zlattice(gram=QQ[-2 1 0 0; 1 -2 1 1; 0 1 -2 1; 0 1 1 -2])
+  # fix an embedding
+  B = matrix(FlintQQ, 10, 10 ,[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1//3, 2//3, 1//3, 2//3, 2//3, 2//3, 1//3, 1//3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+  G = matrix(FlintQQ, 10, 10 ,[-2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, -2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, -2, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, -2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -2, -1, 1, -1, -1, -1, 0, 0, 0, 0, -1, -2, 1, -1, 0, -1, 0, 0, 0, 0, 1, 1, -2, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, -2, -1, -1, 0, 0, 0, 0, -1, 0, 0, -1, -2, -1, 0, 0, 0, 0, -1, -1, 1, -1, -1, -2]);
+  L = Zlattice(B, gram = G);
 
-# this one does not have ample projection
-weyl = QQ[30 1 1 1 1 1 1 1 1 1]*Bdual
-h = ZZ[3 12 11 11]*basis_matrix(S)  #an ample vector
-# confirm that h is in the interior of a weyl chamber,
-# i.e. check that Q does not contain any -2 vector and h^2>0
-Q = Hecke.orthogonal_submodule(S, lattice(V, h))
-@test minimum(rescale(Q, -1)) > 2
-# make weylS ample
-weylS = hcat(weyl[1,1:4],zero_matrix(QQ,1,6))
-separating_roots = oscar.alg23(S, h, weylS, -2)
-# order the reflections appropriately. I did not check the math behind this. So it might be wrong.
-sort!(separating_roots, by=r->inner_product(V,r,h)[1,1]//inner_product(V,r,weyl)[1,1])
-for r in separating_roots
-  global weyl = weyl + inner_product(V, weyl, r)*r
+  B = matrix(FlintQQ, 4, 10 ,[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+  G = matrix(FlintQQ, 10, 10 ,[-2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, -2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, -2, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, -2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -2, -1, 1, -1, -1, -1, 0, 0, 0, 0, -1, -2, 1, -1, 0, -1, 0, 0, 0, 0, 1, 1, -2, 0, 0, 1, 0, 0, 0, 0, -1, -1, 0, -2, -1, -1, 0, 0, 0, 0, -1, 0, 0, -1, -2, -1, 0, 0, 0, 0, -1, -1, 1, -1, -1, -2]);
+  S = Zlattice(B, gram = G);
+
+  weyl = QQ[31   61   52   71   5   -6   5   -2   -7   8]
+  k3 = Oscar.BorcherdsData(L, S, false)
+  weylk3 = change_base_ring(ZZ,solve_left(basis_matrix(L), weyl))
+  walls = oscar._walls_of_chamber(k3, weylk3)
+  @test length(walls)==4
+  walls1 =  [
+  ZZ[0   0   2   1],
+  ZZ[1   1   1   2],
+  ZZ[0   0   -1   -1],
+  ZZ[-1   0   0   0]]
+  @test issetequal(walls, walls1)
 end
-weylS = hcat(weyl[1,1:4],zero_matrix(QQ,1,6))
-@test length(oscar.alg23(S, h, weylS, -2))==0
-@assert weyl == QQ[30 61 146//3 136//3 11//3 -11//3 3 -7//3 -20//3 -1]
-# the weyl vector is S-degenerate
-# make weyl S-nondegenerate as follows
-weyl,_,_ = oscar.nondeg_weyl_new(L,S,weyl,weyl,h)
-# since the output is not deterministic we hardcode:
-#weyl = QQ[30   61   51   42   5   2   -4   -5   -3   -1]
 
-Gamma, W, DD, B = oscar.alg61(L,S,weyl)
+@testset "K3 surface automorphism groups" begin
+  S = Zlattice(gram=QQ[-2 1 0 0; 1 -2 1 1; 0 1 -2 1; 0 1 1 -2])
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 10, compute_OR=true)
+  @test order(matrix_group(k3aut))==2
+  @test length(chambers) == 1
+  @test length(rational_mod_aut) == 3
 
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 18, compute_OR=true)
+  @test order(matrix_group(k3aut))==2
+  @test length(chambers) == 1
+  @test length(rational_mod_aut) == 3
 
-# Another example with finite automorphism group
-S,iU,_=orthogonal_sum(Zlattice(gram=ZZ[0 1; 1 -2]),rescale(root_lattice(:D,4),-1))
-L,S,iS, R,iR = oscar.embed_in_unimodular(S::ZLat, 10)
-V = ambient_space(L)
-# find a hyperbolic plane
-U = lattice(V, iU.matrix*iS.matrix)
-weyl,_ = oscar.weyl_vector(L, U)
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 26, compute_OR=true)
+  @test order(matrix_group(k3aut))==2
+  @test length(chambers) == 1
+  @test length(rational_mod_aut) == 3
 
-h = ZZ[25 6 -10 -9 -16 -10]*basis_matrix(S)  #an ample vector
-@assert inner_product(V,h,h)[1,1]>0
-@assert all([a>0 for a in inner_product(V,h,basis_matrix(S))])
-# confirm that h is in the interior of a weyl chamber,
-# i.e. check that Q does not contain any -2 vector and h^2>0
-Q = Hecke.orthogonal_submodule(S, lattice(V, h))
-@test minimum(rescale(Q, -1)) > 2
+  # Another example with finite automorphism group
+  S,_,_=orthogonal_sum(Zlattice(gram=ZZ[0 1; 1 -2]),rescale(root_lattice(:D,4),-1))
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 10, compute_OR=true)
+  @test order(matrix_group(k3aut))==6
+  @test length(chambers) == 1
+  @test length(rational_mod_aut) == 4
 
-weyl,_,_ = oscar.nondeg_weyl_new(L,S,weyl,weyl,h)
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 18, compute_OR=true)
+  @test order(matrix_group(k3aut))==6
+  @test length(chambers) == 1
+  @test length(rational_mod_aut) == 4
 
-Gamma, W, DD, B = oscar.alg61(L,S,weyl)
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 26, compute_OR=true)
+  @test order(matrix_group(k3aut))==6
+  @test length(chambers) == 1
+  @test length(rational_mod_aut) == 4
 
-# another example
-S,iU,_=orthogonal_sum(Zlattice(gram=ZZ[0 1; 1 -2]),Zlattice(gram=ZZ[-50;]))
-L,S,iS, R,iR = oscar.embed_in_unimodular(S::ZLat, 18)
-V = ambient_space(L)
-# find a hyperbolic plane
-U = lattice(V, iU.matrix*iS.matrix)
-weyl,u0 = oscar.weyl_vector(L, U)
-
-h = ZZ[40 1 -1 ]*basis_matrix(S)  #an ample vector
-@assert inner_product(V,h,h)[1,1]>0
-@assert all([a>0 for a in inner_product(V,h,basis_matrix(S))])
-# confirm that h is in the interior of a weyl chamber,
-# i.e. check that Q does not contain any -2 vector and h^2>0
-Q = Hecke.orthogonal_submodule(S, lattice(V, h))
-@test minimum(rescale(Q, -1)) > 2
-
-weyl,_ = oscar.nondeg_weyl_new(L,S,weyl,weyl,h)
-
-Gamma, W, DD, B = oscar.alg61(L,S,weyl)
+  S,_,_=orthogonal_sum(Zlattice(gram=ZZ[0 1; 1 -2]),rescale(root_lattice(:D,4),-1))
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 10, compute_OR=false)
+  @test length(k3aut)==0
+  @test length(chambers) == 6
+  @test length(rational_mod_aut) == 6
 
 
+  # one with parabolic automorphism group
+  S,iU,_=orthogonal_sum(Zlattice(gram=ZZ[0 1; 1 -2]),Zlattice(gram=ZZ[-50;]))
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 10, compute_OR=true)
+  @test length(k3aut)==2
+  @test length(chambers) == 74
+  @test length(rational_mod_aut) == 4
 
-C = lattice(V,common_invariant(Gamma)[2])
-diagonal(rational_span(C))
+  C = lattice(ambient_space(S),common_invariant(k3aut)[2])
+  d = diagonal(rational_span(C))
+  @test d[1] == 0 # a common invariant isotropic ray.
 
 
-zero_entropy_candidates = oscar.parse_zero_entropy()
+  S,iU,_=orthogonal_sum(Zlattice(gram=ZZ[0 1; 1 -2]),Zlattice(gram=ZZ[-50;]))
+  k3aut, chambers, rational_mod_aut = K3Auto(S, 10, compute_OR=false)
+  @test length(k3aut)==2
+  @test length(chambers) == 74
+  @test length(rational_mod_aut) == 4
 
-zero_entropy_candidates = [Zlattice(gram=g) for g in zero_entropy_candidates]
-
-S = zero_entropy_candidates[3]
-
+end
 

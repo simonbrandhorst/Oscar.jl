@@ -175,7 +175,7 @@ to the basis of `S` and is primitive in `S`.
 function walls(D::Chamber)
   if !isdefined(D, :walls)
     D.walls = _walls_of_chamber(D.data, D.weyl_vector)
-    @assert length(D.walls)>=rank(D.data.S)
+    @assert length(D.walls)>=rank(D.data.S) "$(D.wey_vector)"
   end
   return D.walls
 end
@@ -564,7 +564,7 @@ function _alg58(data::BorcherdsData, w::fmpz_mat)
       if vsquare != cm
         continue
       end
-      a = (vr*Vw)[1,1]
+      a = (vr*Vw)[1,1]  # TODO: could be improved by working in R
       key = (1-a,kc)
       if key in keys(cvp_inputs)
         push!(cvp_inputs[key], vr)
@@ -894,7 +894,7 @@ function K3Auto(L::ZLat, S::ZLat, w::fmpq_mat; entropy_abort=false, compute_OR=t
       continue
     end
     # check G-congruence
-    fp = fingerprint(D)
+    fp = fingerprint(D)  # this is the bottleneck - the computation of the walls.
     if !haskey(chambers,fp)
       chambers[fp] = Chamber[]
     end
@@ -1532,6 +1532,7 @@ function has_zero_entropy(S; rank_unimod=26, preprocessing_only = false)
   if preprocessing_only
     return L,S,weyl
   end
+  @vprint :K3Auto 1 "Weyl vector: $(weyl)"
   data, K3Autgrp, chambers, rational_curves, _ = oscar.K3Auto(L,S,weyl, entropy_abort=true)
   C = lattice(rational_span(S),common_invariant(K3Autgrp)[2])
   d = diagonal(rational_span(C))
@@ -1591,3 +1592,48 @@ function myin(v, L::ZLat)
   return all(denominator(i)==1 for i in v*inverse_basis_matrix(L))
 end
 
+################################################################################
+#
+# Serialization
+#
+################################################################################
+
+############################################################
+# Chamber
+
+@registerSerializationType(Chamber)
+function save_internal(s::SerializerState, D::Chamber)
+    return Dict(
+        :BorcherdsData => save_type_dispatch(s, D.data),
+        :weyl_vector => save_type_dispatch(s, D.weyl_vector),
+        :walls => save_type_dispatch(s, D.walls),
+        :parent_wall => save_type_dispatch(s, D.parent_wall)
+    )
+end
+
+function load_internal(s::DeserializerState, ::Type{Chamber}, dict::Dict)
+    weyl_vector = load_type_dispatch(s, fmpz_mat, dict[:weyl_vector])
+    walls = load_type_dispatch(s, Vector{fmpz_mat}, dict[:walls])
+    parent_wall = load_type_dispatch(s, fmpz_mat, dict[:parent_wall])
+    data = load_type_dispatch(s, BorcherdsData, dict[:BorcherdsData])
+    return Chamber(data, weyl_vector, parent_wall, walls)
+end
+
+############################################################
+# BorcherdsData
+@registerSerializationType(BorcherdsData)
+function save_internal(s::SerializerState, D::BorcherdsData)
+    return Dict(
+        :L => save_type_dispatch(s, D.L),
+        :S => save_type_dispatch(s, D.S),
+        :compute_OR => save_type_dispatch(s, D.compute_OR), #needs to be worked out
+    )
+end
+
+function load_internal(s::DeserializerState, ::Type{BorcherdsData}, dict::Dict)
+    L = load_type_dispatch(s, ZLat, dict[:L])
+    S = load_type_dispatch(s, ZLat, dict[:S])
+    compute_OR = load_type_dispatch(s, Bool, dict[:compute_OR])
+
+    return BorcherdsData(L, S, compute_OR)
+end

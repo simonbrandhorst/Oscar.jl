@@ -175,9 +175,17 @@ to the basis of `S` and is primitive in `S`.
 function walls(D::Chamber)
   if !isdefined(D, :walls)
     D.walls = _walls_of_chamber(D.data, D.weyl_vector)
-    @assert length(D.walls)>=rank(D.data.S) "$(D.wey_vector)"
+    @assert length(D.walls)>=rank(D.data.S) "$(D.weyl_vector)"
   end
   return D.walls
+end
+
+function rays(D::Chamber)
+  r = reduce(vcat, walls(D), init=zero_matrix(ZZ,0,rank(D.data.SS)))
+  rQ = change_base_ring(QQ,r)
+  C = positive_hull(rQ)
+  polarize(C)
+  return rays(C)
 end
 
 function Base.show(io::IO, c::Chamber)
@@ -347,7 +355,7 @@ function separating_hyperplanes(gram::fmpq_mat, v::fmpq_mat, h::fmpq_mat, d)
   s = solve_left(bW, v*prW) * gramW
   Q = gramW + transpose(s)*s*ch*cv^-2
 
-  @vprint :K3Auto 4 Q
+  @vprint :K3Auto 5 Q
   LQ = Zlattice(gram=-Q*denominator(Q))
   S_W = [x[1] for x in short_vectors(LQ,  abs(d*denominator(Q)))]
   append!(S_W,[-x for x in S_W])
@@ -416,6 +424,20 @@ end
 
 hom(D::Chamber, E::Chamber) = alg319(gram_matrix(D.data.SS), walls(D), walls(E), D.data.membership_test)
 
+function myaut(D)
+  G = -D.data.gramS  # negative since the alg somehow assumes that the lengths are positive
+  basis = find_basis(walls(D), ncols(G))
+  basis_inv = inv(change_base_ring(QQ,basis))
+  gram_basis = basis*G*transpose(basis)
+  V = [(ZZ.(vec(i*basis_inv)),(i*G*transpose(i))[1,1]) for i in walls(D)]
+  @show V
+  C = Hecke.ZLatAutoCtx([gram_basis])
+  fl, Csmall = Hecke.try_init_small(C, true, ZZ(-1), true, V)
+  if fl
+    return Hecke.auto(Csmall)
+  end
+end
+
 aut(D::Chamber) = hom(D, D)
 
 # worker for hom and aut
@@ -429,6 +451,7 @@ function alg319(gram::MatrixElem, raysD::Vector{fmpz_mat}, raysE::Vector{fmpz_ma
   # a depth first search with early abort would be more efficient.
   # for now this does not seem to be a bottleneck
   for i in 1:n
+    @vprint :K3Auto 3 "level $(i), partial homs $(length(partial_homs)) \n"
     partial_homs_new = fmpz_mat[]
     for img in partial_homs
       extensions = fmpz_mat[]
@@ -530,6 +553,73 @@ function _alg58(L::ZLat, S::ZLat, R::ZLat, w::MatrixElem)
 end
 
 
+function _alg58_short_vector(data::BorcherdsData, w::fmpz_mat)
+  L = data.L
+  V = ambient_space(L)
+  S = data.S
+  R = data.R
+  wS = w*data.prS
+  wSL = wS*basis_matrix(S)
+  wL = gram_matrix(L)*transpose(w)
+  wSsquare = (wS*data.gramS*transpose(wS))[1,1]
+  W = lattice(V, wS*basis_matrix(S))
+  N = orthogonal_submodule(S, W)
+  # W + N + R < L of finite index
+  svp_input = Tuple{fmpq,fmpq_mat,fmpq,Int}[]
+  for (rR, rRsq) in data.prRdelta
+    if rRsq==2
+      continue
+    end
+    @inbounds rwS = (rR*wL)[1,1]
+    alpha = 1 - rwS
+    usq = alpha^2*wSsquare^-1 - rRsq
+    sq = -2 - usq
+    push!(svp_input, (alpha, rR,sq,1))
+    alpha = 1 + rwS
+    usq = alpha^2*wSsquare^-1 - rRsq
+    sq = -2 - usq
+    push!(svp_input, (alpha, rR, sq, -1))
+  end
+  @inbounds bounds = unique!([-i[3] for i in svp_input])
+  Ndual = dual(N)
+  G = -gram_matrix(Ndual)
+  d = denominator(G)
+  bounds = [i for i in bounds if divides(d,denominator(i))[1]]
+  mi = minimum(bounds)
+  ma = maximum(bounds)
+
+  svN = Hecke._short_vectors_gram(G,mi,ma, filter=bounds)
+  push!(svN, (zeros(Int64,rank(Ndual)),0))
+  result = fmpq_mat[]
+  for (rN, i) in svN
+    rN1 = matrix(ZZ,1,rank(Ndual),rN)*basis_matrix(Ndual)
+    found1 = false
+    found2 = false
+    for (alpha, rR, sq, si) in svp_input
+      if i!= -sq
+        continue
+      end
+      rr = alpha*wSsquare^-1*wSL + si*rR
+      r = rr + rN1
+      if !found1 && @inbounds all(denominator(r[1,i])==1 for i in 1:ncols(r))==1
+        found1 = true
+        push!(result, r*data.prS)
+        break
+      end
+      r = rr - rN1
+      if !found2 && @inbounds all(denominator(r[1,i])==1 for i in 1:ncols(r))==1
+        found2 = true
+        push!(result, r*data.prS)
+        break
+      end
+      if found1 && found2
+        break
+      end
+    end
+  end
+  return result
+end
+
 @doc Markdown.doc"""
 Compute Delta_w
 
@@ -540,7 +630,7 @@ orthogonal projection of `r` to `S^\vee` given in the basis of S.
 
 Algorithm 5.8 in [Shi]
 """
-function _alg58(data::BorcherdsData, w::fmpz_mat)
+function _alg58_close_vector(data::BorcherdsData, w::fmpz_mat)
   V = ambient_space(data.L)
   S = data.S
   d = exponent(discriminant_group(S))
@@ -581,7 +671,6 @@ function _alg58(data::BorcherdsData, w::fmpz_mat)
       end
     end
   end
-
 
   # setup
   gram = gram_matrix(SSdual)
@@ -666,7 +755,7 @@ Return the walls of the L|S chamber induced by `weyl_vector`.
 Corresponds Algorithm 5.11 in [Shi] and calls Polymake.
 """
 function _walls_of_chamber(data::BorcherdsData, weyl_vector)
-  walls1 = _alg58(data, weyl_vector)
+  walls1 = _alg58_short_vector(data, weyl_vector)
   if length(walls1)==rank(data.S)
     # shortcut which avoids calling Polymake
     d = rank(data.S)
@@ -1004,6 +1093,7 @@ function span_in_S(L, S, weyl)
   Delta_w = _alg58(L, S, R, weyl)
   G = gram_matrix(V)
   prSDelta_w = [v*G for v in Delta_w]
+  @vprint :K3Auto 2 "Ddual given by $(length(prSDelta_w)) rays\n"
   i = zero_matrix(QQ, 0, degree(S))
   R = Hecke.orthogonal_submodule(L, S)
   Ddual = reduce(vcat, prSDelta_w, init=i)
@@ -1011,6 +1101,7 @@ function span_in_S(L, S, weyl)
   Ddual = vcat(Ddual, -basis_matrix(R))
   Ddual = positive_hull(Ddual)
   D = polarize(Ddual)
+  @vprint :K3Auto 3 "calculating rays\n"
   gensN = [matrix(QQ, 1, degree(S), v) for v in vcat(rays(D),lineality_space(D))]
   gensN = reduce(vcat, gensN, init=i)
   r = Hecke.rref!(gensN)
@@ -1025,11 +1116,15 @@ function weyl_vector_non_degenerate(L::ZLat, S::ZLat, u0::fmpq_mat, weyl::fmpq_m
   u = u0
 
 
-  @vprint :K3Auto 2 "moving ample class\n"
+  @vprint :K3Auto 2 "calculating separating hyperplanes\n"
   separating_walls = separating_hyperplanes(L, u, ample, -2)
+  @vprint :K3Auto 2 "moving ample class\n"
   u, weyl = chain_reflect(V, ample, u, weyl, separating_walls)
 
-
+  if is_S_nondegenerate(L,S,weyl)
+    return weyl, u, ample
+  end
+  @vprint :K3Auto 2 "calculating QQDcapS\n"
   QQDcapS = span_in_S(L,S,weyl)
 
   N = Hecke.orthogonal_submodule(L, QQDcapS)
@@ -1124,7 +1219,7 @@ Input:
 # we can do the 24 constructions of the leech lattice
 function weyl_vector(L::ZLat, U0::ZLat)
   @vprint :K3Auto 1 "computing an initial Weyl vector \n"
-  @hassert :K3Auto 1 gram_matrix(U0) == QQ[0 1; 1 -2]
+  @assert gram_matrix(U0) == QQ[0 1; 1 -2] "$(gram_matrix(U0))"
   V = ambient_space(L)
   U = U0
   R = Hecke.orthogonal_submodule(L,U)
@@ -1306,7 +1401,7 @@ end
 Return an embedding of `S` into an even unimodular, hyperbolic lattice L of rank
 n as well as an `S`-nondegenerate Weyl vector.
 """
-function preprocessingK3Auto(S::ZLat, n::Integer)
+function preprocessingK3Auto(S::ZLat, n::Integer; ample=nothing)
   @req n in [10,18,26] "n must be one of 10, 18 or 26"
   # another example
   S = Zlattice(gram=gram_matrix(S))
@@ -1333,24 +1428,29 @@ function preprocessingK3Auto(S::ZLat, n::Integer)
   vv = 10//cc * vv
   vv = matrix(QQ,1, ncols(vv),[round(i) for i in vv])
 
-
-  #find a random ample vector ... or use a perturbation of the weyl vector?
-  @vprint :K3Auto 1 "searching a random ample vector in S\n"
-  while true
-    h = (vv+matrix(ZZ,1,rank(S),rand(-10:10, rank(S))))*basis_matrix(S)
-    # confirm that h is in the interior of a weyl chamber,
-    # i.e. check that Q does not contain any -2 vector and h^2>0
-    if inner_product(V,h,h)[1,1]<=0
-      continue
+  if ample isa Nothing
+    #find a random ample vector ... or use a perturbation of the weyl vector?
+    @vprint :K3Auto 1 "searching a random ample vector in S\n"
+    while true
+      h = (vv+matrix(ZZ,1,rank(S),rand(-10:10, rank(S))))*basis_matrix(S)
+      # confirm that h is in the interior of a weyl chamber,
+      # i.e. check that Q does not contain any -2 vector and h^2>0
+      if inner_product(V,h,h)[1,1]<=0
+        continue
+      end
+      @hassert :K3Auto 1 0 < inner_product(V,h,h)[1,1]
+      Q = Hecke.orthogonal_submodule(S, lattice(V, h))
+      if length(short_vectors(rescale(Q, -1), 2)) == 0
+        break
+      end
     end
-    @hassert :K3Auto 1 0 < inner_product(V,h,h)[1,1]
-    Q = Hecke.orthogonal_submodule(S, lattice(V, h))
-    if length(short_vectors(rescale(Q, -1), 2)) == 0
-      break
+    if inner_product(V,weyl,h)[1,1]<0
+      h = -h
     end
-  end
-  if inner_product(V,weyl,h)[1,1]<0
-    h = -h
+  else
+    h = ample*basis_matrix(S)
+    Q = orthogonal_submodule(S, lattice(V,h))
+    @assert length(short_vectors(rescale(Q,-1),2))==0
   end
   weyl1,u,hh = oscar.weyl_vector_non_degenerate(L,S,u0, weyl,h)
   return L,S,weyl1#L,S,u0, weyl,weyl1, h
@@ -1590,50 +1690,4 @@ end
 
 function myin(v, L::ZLat)
   return all(denominator(i)==1 for i in v*inverse_basis_matrix(L))
-end
-
-################################################################################
-#
-# Serialization
-#
-################################################################################
-
-############################################################
-# Chamber
-
-@registerSerializationType(Chamber)
-function save_internal(s::SerializerState, D::Chamber)
-    return Dict(
-        :BorcherdsData => save_type_dispatch(s, D.data),
-        :weyl_vector => save_type_dispatch(s, D.weyl_vector),
-        :walls => save_type_dispatch(s, D.walls),
-        :parent_wall => save_type_dispatch(s, D.parent_wall)
-    )
-end
-
-function load_internal(s::DeserializerState, ::Type{Chamber}, dict::Dict)
-    weyl_vector = load_type_dispatch(s, fmpz_mat, dict[:weyl_vector])
-    walls = load_type_dispatch(s, Vector{fmpz_mat}, dict[:walls])
-    parent_wall = load_type_dispatch(s, fmpz_mat, dict[:parent_wall])
-    data = load_type_dispatch(s, BorcherdsData, dict[:BorcherdsData])
-    return Chamber(data, weyl_vector, parent_wall, walls)
-end
-
-############################################################
-# BorcherdsData
-@registerSerializationType(BorcherdsData)
-function save_internal(s::SerializerState, D::BorcherdsData)
-    return Dict(
-        :L => save_type_dispatch(s, D.L),
-        :S => save_type_dispatch(s, D.S),
-        :compute_OR => save_type_dispatch(s, D.compute_OR), #needs to be worked out
-    )
-end
-
-function load_internal(s::DeserializerState, ::Type{BorcherdsData}, dict::Dict)
-    L = load_type_dispatch(s, ZLat, dict[:L])
-    S = load_type_dispatch(s, ZLat, dict[:S])
-    compute_OR = load_type_dispatch(s, Bool, dict[:compute_OR])
-
-    return BorcherdsData(L, S, compute_OR)
 end

@@ -591,12 +591,13 @@ function _alg58_short_vector(data::BorcherdsData, w::fmpz_mat)
   svN = Hecke._short_vectors_gram(G,mi,ma, filter=bounds)
   push!(svN, (zeros(Int64,rank(Ndual)),0))
   result = fmpq_mat[]
-  for (rN, i) in svN
+  for (rN, sqrN) in svN
     rN1 = matrix(ZZ,1,rank(Ndual),rN)*basis_matrix(Ndual)
     found1 = false
     found2 = false
+    sqrN = -sqrN
     for (alpha, rR, sq, si) in svp_input
-      if i!= -sq
+      if sqrN != sq
         continue
       end
       rr = alpha*wSsquare^-1*wSL + si*rR

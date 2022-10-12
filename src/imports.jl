@@ -145,7 +145,14 @@ import Nemo:
     rising_factorial,
     root,
     unit,
-    ZZ
+    ZZ,
+    RealField
+
+const RR = RealField(53)
+const CC = Nemo.ComplexField(53)
+export RR 
+export CC
+export RealField
 
 exclude = [:Nemo, :AbstractAlgebra, :Rational, :change_uniformizer, :genus_symbol, :data,
     :narrow_class_group, :perm, :SymmetricGroup]

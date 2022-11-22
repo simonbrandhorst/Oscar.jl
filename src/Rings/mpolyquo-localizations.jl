@@ -948,7 +948,7 @@ function compose(
 #  end
   ### The fallback version. Careful: This might not carry over maps on the coefficient rings!
   R = base_ring(domain(f))
-  return MPolyQuoLocalizedRingHom(domain(f), codomain(g), hom(R, codomain(g), [g(f(x)) for x in gens(R)]))
+  return MPolyQuoLocalizedRingHom(domain(f), codomain(g), hom(R, codomain(g), [g(f(x)) for x in gens(R)], check=false), check=false)
 end
 
 (f::MPolyQuoLocalizedRingHom)(I::Ideal) = ideal(codomain(f), f.(domain(f).(gens(I))))
@@ -1520,4 +1520,22 @@ function jacobi_matrix(g::Vector{<:MPolyQuoLocalizedRingElem})
   n = nvars(base_ring(L))
   @assert all(x->parent(x) == L, g)
   return matrix(L, n, length(g), [derivative(x, i) for i=1:n for x = g])
+end
+
+@attr function is_prime(I::MPolyQuoLocalizedIdeal)
+  return is_prime(saturated_ideal(I))
+end
+
+@attr function is_integral_domain(W::MPolyQuoLocalizedRing)
+  return is_prime(modulus(W))
+end
+
+@Markdown.doc """
+    is_integral_domain(R::Ring)
+
+Return whether or not `R` is an integral domain.
+"""
+function is_integral_domain(R::Ring)
+  is_domain_type(typeof(R)) && return true
+  error("method not implemented for rings of type $(typeof(R))")
 end

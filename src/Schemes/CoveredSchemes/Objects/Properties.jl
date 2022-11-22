@@ -19,3 +19,14 @@ end
   return all(x->is_smooth(x), affine_charts(X))
 end
 
+@attr function is_integral(X::AbsCoveredScheme)
+  return is_connected(X) && all(U->(is_integral(U)), affine_charts(X))
+end
+
+@attr function is_connected(X::AbsCoveredScheme)
+  return is_connected(glueing_graph(default_covering(X)))
+end
+
+function is_connected(g::Graph{Undirected})
+  return Polymake.call_function(:graph, :is_connected, g.pm_graph)
+end

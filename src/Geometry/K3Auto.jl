@@ -50,6 +50,7 @@ mutable struct BorcherdsCtx
   gramS::fmpz_mat
   prS::fmpq_mat
   compute_OR::Bool
+  use_Delta_w::Bool
   # TODO: Store temporary variables for the computations
   # in order to make the core-functions adjacent_chamber and walls
   # as non-allocating as possible.
@@ -61,7 +62,7 @@ end
 
 
 @doc Markdown.doc"""
-    BorcherdsCtx(L::ZLat, S::ZLat, compute_OR::Bool=true) -> BorcherdsCtx
+    BorcherdsCtx(L::ZLat, S::ZLat, compute_OR::Bool=true, use_Delta_w) -> BorcherdsCtx
 
 Return the context for Borcherds' method.
 
@@ -73,7 +74,7 @@ Return the context for Borcherds' method.
   If `compute_OR` is `true`, then `G` consists the subgroup consisting of
   isometries of `S` that can be extended to isometries of `L`.
 """
-function BorcherdsCtx(L::ZLat, S::ZLat, weyl, compute_OR::Bool=true)
+function BorcherdsCtx(L::ZLat, S::ZLat, weyl, compute_OR::Bool=true, use_Delta_w::Bool=false)
   r = rank(L)
   lw = (weyl*gram_matrix(L)*transpose(weyl))[1,1]
   if  r == 26
@@ -166,7 +167,7 @@ function BorcherdsCtx(L::ZLat, S::ZLat, weyl, compute_OR::Bool=true)
   deltaR = [change_base_ring(ZZ, matrix(QQ, 1, rkR, v[1])*basis_matrix(R)) for v in short_vectors(rescale(R,-1),2)]
   dualDeltaR = [gramL*transpose(r) for r in deltaR]
   return BorcherdsCtx(L, S, weyl, SS, R, deltaR, dualDeltaR, prRdelta, membership_test,
-                      gramL, gramS, prS, compute_OR)
+                      gramL, gramS, prS, compute_OR, use_Delta_w)
 end
 
 ################################################################################
@@ -203,6 +204,7 @@ mutable struct K3Chamber
   # for v in walls, the corresponding half space is defined by the equation
   # x * gram_matrix(S)*v >= 0, further v is primitive in S (and, in contrast to Shimada, not S^\vee)
   walls::Vector{fmpz_mat}
+  Delta_w::Vector{fmpz_mat}
   lengths::Vector{fmpq}  #
   B::fmpz_mat # QQ-basis consisting of rays #... why do we bother to save this?
   gramB::fmpz_mat # the basis matrix inferred from the QQ-basis
@@ -280,7 +282,7 @@ and takes `v` primitive in `S^\vee`.
 """
 function walls(D::K3Chamber)
   if !isdefined(D, :walls)
-    D.walls = _walls_of_chamber(D.data, D.weyl_vector)
+    D.walls = _walls_of_chamber(D.data, D.weyl_vector, Delta_w(D))
     @assert length(D.walls)>=rank(D.data.S) "$(D.weyl_vector)"
   end
   return D.walls
@@ -331,22 +333,27 @@ Return the fingerprint of this chamber.
 The fingerprint is an invariant computed from the rays and their inner products.
 """
 function fingerprint(D::K3Chamber)
-  v = sum(walls(D))
+  if D.data.use_Delta_w
+    vecs = Delta_w(D)
+  else
+    vecs = walls(D)
+  end
+  v = sum(vecs)
   G = D.data.gramS
   m1 = (v*G*transpose(v))[1,1]
-  m2 = [(a*G*transpose(a))[1,1] for a in walls(D)]
+  m2 = [(a*G*transpose(a))[1,1] for a in vecs]
   sort!(m2)
-  m3 = [(v*G*transpose(a))[1,1] for a in walls(D)]
+  m3 = [(v*G*transpose(a))[1,1] for a in vecs]
   sort!(m3)
   m4 = fmpz[]
-  for i in 1:length(walls(D))
+  for i in 1:length(vecs)
     for j in 1:i-1
-      push!(m4,(walls(D)[i]*G*transpose(walls(D)[j]))[1,1])
+      push!(m4,(vecs[i]*G*transpose(vecs[j]))[1,1])
     end
   end
   sort!(m4)
   V = Dict{Tuple{fmpz,fmpz},Vector{fmpz_mat}}()
-  for w in walls(D)
+  for w in vecs
     i =  (v*G*transpose(w))[1,1]
     j =  (w*G*transpose(w))[1,1]
     if (i,j) in keys(V)
@@ -360,7 +367,7 @@ function fingerprint(D::K3Chamber)
   m5 = []
   for i in keys(V)
     vi = sum(V[i])
-    push!(m5, [i,sort!([(vi*G*transpose(j))[1,1] for j in walls(D)])])
+    push!(m5, [i,sort!([(vi*G*transpose(j))[1,1] for j in vecs])])
   end
   sort!(m5)
   # So far we have only O(S)-invariants. There are also ways to produce G-invariants
@@ -392,7 +399,11 @@ invariant forms
 """
 function _fingerprint_backtrack!(D::K3Chamber)
   n = rank(D.data.S)
-  V = walls(D)
+  if D.data.use_Delta_w
+    V = Delta_w(D)
+  else
+    V = walls(D)
+  end
   gramS = gram_matrix(D.data.S)
   B, indB = _find_basis(V, n)
   tmp = V[indB]
@@ -467,7 +478,11 @@ Return the number of possible extensions of an `n`-partial isometry to
 an `n+1`-partial one.
 """
 function _possible(D::K3Chamber, per, I, J)
-  vectors = walls(D)
+  if D.data.use_Delta_w
+    vectors = Delta_w(D)
+  else
+    vectors = walls(D)
+  end
   lengths = D.lengths
   gramB = D.gramB
   gramS = D.data.gramS
@@ -731,8 +746,13 @@ function alg319(D::K3Chamber, E::K3Chamber)
   fp = D.fp_diagonal
   basis = D.B
   n = ncols(gram)
-  raysD = walls(D)
-  raysE = walls(E)
+  if D.data.use_Delta_w
+    raysD = Delta_w(D)
+    raysE = Delta_w(E)
+  else
+    raysD = walls(D)
+    raysE = walls(E)
+  end
   partial_homs = [zero_matrix(ZZ, 0, n)]
   # breadth first search
   # Since we expect D and E to be isomorphic,
@@ -792,7 +812,7 @@ end
 
 
 # legacy worker for hom and aut without Plesken-Souvignier preprocessing
-function alg319(gram::MatrixElem, raysD::Vector{fmpz_mat}, raysE::Vector{fmpz_mat}, membership_test)
+function alg319(gram, raysD::Vector{fmpz_mat}, raysE::Vector{fmpz_mat}, membership_test)
   n = ncols(gram)
   partial_homs = [zero_matrix(ZZ, 0, n)]
   basis,_ = _find_basis(raysD, n)
@@ -800,7 +820,7 @@ function alg319(gram::MatrixElem, raysD::Vector{fmpz_mat}, raysE::Vector{fmpz_ma
   return alg319(gram, basis, gram_basis, raysD, raysE, membership_test)
 end
 
-function alg319(gram::MatrixElem, basis::fmpz_mat, gram_basis::fmpq_mat, raysD::Vector{fmpz_mat}, raysE::Vector{fmpz_mat}, membership_test)
+function alg319(gram, basis::fmpz_mat, gram_basis, raysD::Vector{fmpz_mat}, raysE::Vector{fmpz_mat}, membership_test)
   n = ncols(gram)
   partial_homs = [zero_matrix(ZZ, 0, n)]
   # breadth first search
@@ -1016,6 +1036,57 @@ function _alg58_short_vector(data::BorcherdsCtx, w::fmpz_mat)
   return result
 end
 
+function Delta_w(D::K3Chamber, alg=:short)
+  if isdefined(D, :Delta_w)
+    return D.Delta_w
+  end
+  if alg==:short
+    Delta_w = _alg58_short_vector(D.data,D.weyl_vector)
+  elseif alg==:close
+    Delta_w = _alg58_close_vector(D.data,D.weyl_vector)
+  else
+    error("invalid algorithm")
+  end
+  Delta_wS = [change_base_ring(ZZ,denominator(i)*i) for i in Delta_w]
+  for i in eachindex(Delta_wS)
+    g = gcd(vec(Delta_wS[i]))
+    if g==1
+      continue
+    end
+    Delta_wS[i] = divexact(Delta_wS[i],g)
+  end
+  D.Delta_w = Delta_wS
+  return Delta_wS
+end
+
+function _walls_lp(D::K3Chamber, G)
+  vv = Delta_w(D)
+  v = [i*D.data.gramS for i in vv]
+  walls = fmpz_mat[]
+  @vprint :K3Auto 3 "computing walls of $D\n"
+  #G = matrix_group(aut(D))
+  X = gset(G, (x,g)->x*g, vv)
+  k = 0
+  for orb in orbits(X)
+    r = representative(orb)
+    k = k+length(orb)
+    i = findfirst(==(r),vv)
+
+    vminusi = reduce(vcat, (v[j] for j in eachindex(v) if i!=j))
+    P = Polyhedron(-vminusi, zeros(Int, nrows(vminusi)))
+    lp = LinearProgram(P, vec(v[i]), convention=:min)
+    @vprint :K3Auto 3 "solving linear program $i , $k / $(length(v)) \n"
+    m, _ = solve_lp(lp)
+    if m!=0
+      @vprint :K3Auto 4 "wall\n"
+      push!(walls, vv[i])
+    else
+      @vprint :K3Auto 4 "redundant \n"
+    end
+  end
+  return walls
+end
+
 @doc Markdown.doc"""
     _alg58_close_vector(data::BorcherdsCtx, w::fmpz_mat)
 
@@ -1154,6 +1225,11 @@ function _walls_of_chamber(data::BorcherdsCtx, weyl_vector, alg=:short)
   elseif alg==:close
     walls1 = _alg58_close_vector(data, weyl_vector)
   end
+  return _walls_of_chamber(data, weyl_vector, walls1)
+end
+
+function _walls_of_chamber(data::BorcherdsCtx, weyl_vector, delta_w)
+  walls1 = delta_w
   if length(walls1)==rank(data.S)
     # shortcut which avoids calling Polymake
     d = rank(data.S)

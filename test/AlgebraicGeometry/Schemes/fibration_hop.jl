@@ -158,7 +158,7 @@ function transform_to_weierstrass(g::MPolyElem, x::MPolyElem, y::MPolyElem, P::V
     end
 end
 
-function elliptic_curve(f::MPolyRingElem, x,y)
+function Hecke.elliptic_curve(f::MPolyRingElem, x,y)
   # asserts
   k = coefficient_ring(f)
   if !(k isa Field)

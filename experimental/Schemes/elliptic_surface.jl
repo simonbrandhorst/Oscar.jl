@@ -603,6 +603,7 @@ basis of the trivial lattice, gram matrix, fiber_components
     for (i,I) in enumerate(comp)
       name = string(root_type[1], root_type[2])
       set_attribute!(components(I)[1], :name, string("Component ", name, "_", i-1," of fiber over ", Tuple(pt)))
+      set_attribute!(I, :name, string("Component ", name, "_", i-1," of fiber over ", Tuple(pt)))
       set_attribute!(components(I)[1], :_self_intersection, -2)
     end
   end
@@ -845,7 +846,9 @@ function _section(X::EllipticSurface, P::EllCrvPt)
   PY = pullback(X.inc_Y, PX)
   set_attribute!(PY, :name, string("section: (",P[1]," : ",P[2]," : ",P[3],")"))
   set_attribute!(PY, :_self_intersection, -euler_characteristic(X))
-  return WeilDivisor(PY, check=false)
+  D = WeilDivisor(PY, check=false)
+  set_attribute!(D, :name, string("section: (",P[1]," : ",P[2]," : ",P[3],")"))
+  return D
 end
 
 @doc raw"""

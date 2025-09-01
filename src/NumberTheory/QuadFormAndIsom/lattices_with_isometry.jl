@@ -762,7 +762,8 @@ function integer_lattice_with_isometry(
     L::ZZLat,
     f::QQMatrix;
     check::Bool=true,
-    ambient_representation::Bool=true
+    ambient_representation::Bool=true,
+    preserves_lattice::Bool=true
   )
   if rank(L) == 0
     Vf = quadratic_space_with_isometry(ambient_space(L))
@@ -778,7 +779,9 @@ function integer_lattice_with_isometry(
     Vf = quadratic_space_with_isometry(ambient_space(L), f_ambient; check)
     B = basis_matrix(L)
     ok, f = can_solve_with_solution(B, B*f_ambient; side=:left)
-    @req ok "Isometry does not preserve the lattice"
+    if check && preserves_lattice
+      @req ok "Isometry does not preserve the lattice"
+    end
   else
     V = ambient_space(L)
     B = basis_matrix(L)
@@ -793,7 +796,7 @@ function integer_lattice_with_isometry(
 
   if check
     @req f*gram_matrix(L)*transpose(f) == gram_matrix(L) "f does not define an isometry of L"
-    @hassert :ZZLatWithIsom 1 basis_matrix(L)*f_ambient == f*basis_matrix(L)
+    @hassert :ZZLatWithIsom 1 !preserves_lattice || basis_matrix(L)*f_ambient == f*basis_matrix(L)
   end
 
   return ZZLatWithIsom(Vf, L, f, n)
@@ -1514,7 +1517,18 @@ function discriminant_group(Lf::ZZLatWithIsom)
   L = lattice(Lf)
   f = ambient_isometry(Lf)
   q = discriminant_group(L)
-  f = hom(q, q, elem_type(q)[q(lift(t)*f) for t in gens(q)])
+  P = prime_divisors(ZZ(index(L,intersect(L,lattice_in_same_ambient_space(L,basis_matrix(L)*f)))))
+  @assert length(P)<=1
+  if length(P) == 0 || 1 == order(q)
+    d = ZZ(1)
+    f = hom(q, q, elem_type(q)[q(lift(t)*f) for t in gens(q)])
+  else 
+    d = only(P)
+    e = elementary_divisors(q)[end]
+    R,iR = residue_ring(ZZ,e)
+    s = preimage(iR,inv(iR(d)))
+    f = hom(q, q, elem_type(q)[s*q(lift(t)*f*d) for t in gens(q)])
+  end
   fq = gens(Oscar._orthogonal_group(q, ZZMatrix[matrix(f)]; check=false))[1]
   return q, fq
 end

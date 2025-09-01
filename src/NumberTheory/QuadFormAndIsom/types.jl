@@ -199,13 +199,15 @@ endowed with an isometry.
   Lb::ZZLat
   f::QQMatrix
   n::IntExt
+  preserves_lattice::Bool
 
   function ZZLatWithIsom(
       Vf::QuadSpaceWithIsom,
       Lb::ZZLat,
       f::QQMatrix,
-      n::IntExt
+      n::IntExt;
+      preserves_lattice::Bool=true
     )
-    return new(Vf, Lb, f, n)
+    return new(Vf, Lb, f, n, preserves_lattice)
   end
 end
